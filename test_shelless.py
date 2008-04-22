@@ -6,10 +6,16 @@ from twisted.cred import portal, credentials, checkers
 from zope import interface
 from twisted.conch.manhole_ssh import ConchFactory
 
+# comments tagged with *8.2* means that this is meant to get around a bug in
+# trial, and hopefully that bug will be fixed by 8.2
 
 def execCommand(process, command):
     args = command.split()
-    reactor.spawnProcess(process, args[0], args, os.environ)
+    # *8.2*
+    # reactor.spawnProcess(process, args[0], args, os.environ)
+    reactor.callLater(0, 
+                      reactor.spawnProcess, 
+                      process, args[0], args, os.environ)
     return process.deferred
 
 
@@ -19,6 +25,7 @@ class TesterError(Exception):
         self.value = value
         self.data = data
         self.exitCode = exitCode
+
 
 class AlwaysAllow:
     credentialInterfaces = ( credentials.IUsernamePassword, 
@@ -35,22 +42,31 @@ class SSHTester(protocol.ProcessProtocol):
         self.data = ""
         self.error = ""
         self.deferred = defer.Deferred()
+        self.connected = False
+        self.queue = []
+
+    def connectionMade(self):
+        self.connected = True
+        for item in self.queue:
+            if item is None:
+                self.finish()
+            else:
+                self.write(item)
 
     def write(self, data):
-        if self.error and not self.error.startswith("Connecting to"):
-            self.deferred.errback(TesterError(self.error, self.data))
-        else:
-            self.deferred.callback(self.data)
+        if not self.connected:
+            self.queue.append(data)
+            return self.deferred
         
         self.data = ""
         self.error = ""
-        self.deferred = defer.Deferred()
-
         self.transport.write(data)
-        return self.deferred
 
     def finish(self):
-        self.transport.closeStdin()
+        if not self.connected:
+            self.queue.append(None)
+        else:
+            self.transport.closeStdin()
 
     def outReceived(self, data):
         self.data += data
@@ -59,6 +75,9 @@ class SSHTester(protocol.ProcessProtocol):
         self.error += data
 
     def processEnded(self, reason):
+        self.error = "\n".join(
+            [ x for x in self.error.split("\n") 
+              if not x.startswith("Connecting to")])
         if reason.value.exitCode != 0:
             self.deferred.errback(
                 TesterError(self.error, self.data, reason.value.exitCode))
@@ -81,18 +100,22 @@ class TestTester(unittest.TestCase):
         return d
 
     def test_regSFTP(self):
-        execCommand(self.ssht, "sftp suijin")
-        d = self.ssht.write('exit')
+        d = execCommand(self.ssht, "sftp suijin localhost")
+        self.ssht.write('exit\n')
         self.ssht.finish()
-        return d
+        return self.ssht.deferred
 
 
 class TestSecured:
 
-    def __init__(self, realmFactory):
-        self.realmFactory = None #must be initialized
+    def realmFactory(self):
+        raise NotImplementedError
 
     def setUp(self):
+        """
+        Starts a shelless SSH server.  Subclasses need to specify
+        realmFactory
+        """
         p = portal.Portal(self.realmFactory())
         p.registerChecker(AlwaysAllow())
         f = ConchFactory(p)
@@ -110,7 +133,9 @@ class TestShelllessSSH(TestSecured, unittest.TestCase):
 
     def __init__(self, *args, **kwargs):
         unittest.TestCase.__init__(self, *args, **kwargs)
-        self.realmFactory = shelless.ShelllessSSHRealm
+        
+    def realmFactory(self):
+        return shelless.ShelllessSSHRealm()
 
     def test_noshell(self):
         d = execCommand(self.ssht, "ssh -p %d localhost" % self.port)
@@ -122,7 +147,7 @@ class TestShelllessSSH(TestSecured, unittest.TestCase):
 
     def test_noexec(self):
         d = execCommand(self.ssht, 
-                                  'ssh -p %d localhost "ls"' % self.port)
+                        'ssh -p %d localhost "ls"' % self.port)
         d.addCallback(
             lambda x: self.fail("Exec request to server should fail, "+
                                 "but instead got: %s" % x))

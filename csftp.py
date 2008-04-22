@@ -11,11 +11,71 @@ from twisted.conch.ls import lsLine
 def simplifyAttributes(filePath):
     return { "size" : filePath.statinfo.st_size,
              "permissions" : filePath.statinfo.st_mode,
-             "atime" : filePath.statinfo.st_mtime,
-             "mtime" : filePath.statinfo.st_atime }
+             "atime" : filePath.statinfo.st_atime,
+             "mtime" : filePath.statinfo.st_mtime }
 
 
 class FilePath(filepath.FilePath):
+
+    def open(self, mode=None, flags=None):
+        """
+        Opens self with either a given mode or given flags (such as
+        os.O_RDONLY, os.O_CREAT, etc or-ed together - see os module 
+        documentation).  If both are passed, raises an error.
+
+        If flags are passed, a mode will automatically be generated from
+        the flags.  By default, the file will be readable unless os.O_WRONLY
+        is passed (without also passing os.O_RDWR - passing os.O_RDONLY also
+        will do nothing).  A file will only be writable (appending or 
+        otherwise) if os.WRONLY or os.RDWR flags are passed.
+
+        @returns: file object to self
+        @raises ValueError if both mode and flags are passed
+        """
+        # User provided flags should not be used with a user given mode because
+        # certain combinations of modes and flags will raises very unhelpful
+        # "Invalid argument" type errors.  Besides, modes can be generated
+        # from the flags given.
+        if flags is None:
+            if not mode:
+                mode = 'r'
+            if self.alwaysCreate:
+                if 'a' in mode:
+                    raise ValueError(
+                        "Appending not supported when alwaysCreate == True")
+                return self.create()
+            return open(self.path, mode+'b')
+        else:
+            if mode:
+                raise ValueError("Either mode or flags accepted, but not both")
+
+            def isInFlags(lookingFor):
+                return flags & lookingFor == lookingFor
+
+            # Given that os.open returns only a file descriptor,
+            # FilePath.open returns a file object, a mode must be passed
+            # to os.fdopen - this will be determined based on the flags.
+
+            # Modes we care about: 'r', 'w', 'a', 'r+', 'a+'
+            # We don't care about w+, because if os.open is called with
+            # os.O_CREAT the file will already have been created.  If that
+            # flag was not passed, then we don't want the file to be created
+            # anyway.
+            
+            if isInFlags(os.O_RDWR):
+                if isInFlags(os.O_APPEND):
+                    mode = 'a+'
+                else:
+                    mode = 'r+'
+            elif isInFlags(os.O_WRONLY):
+                if isInFlags(os.O_APPEND):
+                    mode = 'a'
+                else:
+                    mode = 'w'
+            else:
+                mode = 'r'
+
+            return os.fdopen(os.open(self.path, flags), mode)
 
     def restat(self, reraise=True, followLink=True):
         try:
@@ -29,15 +89,6 @@ class FilePath(filepath.FilePath):
             if reraise:
                 raise
  
-    def remove(self):
-        if self.isdir() and not self.islink():
-            for child in self.children():
-                child.remove()
-            os.rmdir(self.path)
-        else:
-            os.remove(self.path)
-        self.restat(False)
-
     def walk(self):
         yield self
         if self.isdir() and not self.islink():
@@ -63,24 +114,6 @@ class FilePath(filepath.FilePath):
         @return: a FilePath
         """
         return self.clonePath(os.path.realpath(self.path))
-
-    def symlink(self, linkFilePath):
-        """
-        Creates a symlink to self to at the path in the FilePath
-        linkFilePath.  Only works on posix systems due to its dependence on
-        os.symlink.
-
-        @param linkFilePath: a FilePath representing the link to be created
-        @raise ValueError: If linkFilePath already exists or if the inability 
-        to create the symlink is due to the fact that linkFilePath.parent() 
-        does not exist.
-        """
-        if linkFilePath.exists():
-            raise ValueError("%s already exists" % linkFilePath.path)
-        p = linkFilePath.parent()
-        if not p.exists():
-            raise ValueError("%s does not exist" % p.path)
-        os.symlink(self.path, linkFilePath.path)
 
 FilePath.clonePath = FilePath
 
@@ -211,7 +244,7 @@ class ChrootedSFTPServer:
             raise ChrootedFSError("%s already exists." % linkPath)
         if not tp.exists():
             raise ChrootedFSError("%s does not exist." % targetPath)
-        tp.symlink(lp)
+        tp.linkTo(lp)
 
     def removeFile(self, filename):
         """
@@ -351,22 +384,15 @@ class ChrootedSFTPFile:
         @param flags: flags to open the file with
         """
         self.filePath = filePath
-        self.fd = self.filePath.open(self.flagsToMode(flags)[0])
+        self.fd = self.filePath.open(flags=self.flagTranslator(flags))
 
-    def flagsToMode(self, flags):
+    def flagTranslator(self, flags):
         """
         Translate file flags to Python file opening modes
         @param flags: flags to translate into file opening mode
-        @param exists: boolean that says whether the file exists or not
         """
-        # Python file access modes:
-        # 'r'  - read from file - file should exist or error
-        # 'w'  - write to file - overwrites or creates
-        # 'a'  - append to file or create file
-        # 'r+' - read from and write to file - file should exist or error
-        # 'w+' - write to and read form file - overwrites or creates
-        # 'a+' - append to and read from file - appends or creates
-
+        def isInFlags(lookingFor):
+            return flags & lookingFor == lookingFor
         # file flags:
         # READ - read to a file
         # WRITE - write to a file
@@ -376,32 +402,52 @@ class ChrootedSFTPFile:
         # EXCLUDE - if the file exists, fail to open it
         # TEXT - open in text mode
         # BINARY - open in binary mode
-        m = ['r', 'w', 'a', 'r+', 'w+', 'a+']
-        if ( flags & filetransfer.FXF_CREAT != filetransfer.FXF_CREAT and
-             not self.filePath.exists() ):
-            raise OSError("%s does not exist." % self.filePath.path)
-        if ( flags & filetransfer.FXF_EXCL == filetransfer.FXF_EXCL and
-             self.filePath.exists() ):
-            raise OSError("%s exists." % self.filePath.path)
-        # read flag
-        if flags & filetransfer.FXF_READ != filetransfer.FXF_READ:
-            m = filter(lambda x: x.find('r')<0 and x.find('+')<0, m)
+
+        if isInFlags(filetransfer.FXF_READ):
+            if isInFlags(filetransfer.FXF_WRITE):
+                newflags = os.O_RDWR
+            else:
+                newflags = os.O_RDONLY
+        elif isInFlags(filetransfer.FXF_WRITE):
+            newflags = os.O_WRONLY
         else:
-            m = filter(lambda x: x=='r' or x.find('+')>=0, m)
-        # write flag
-        if flags & filetransfer.FXF_WRITE != filetransfer.FXF_WRITE:
-            m = filter(lambda x: x.find('w')<0 and x.find('+')<0, m)
-        else:
-            m = filter(lambda x: x!='r', m)
-        # append flag
-        if flags & filetransfer.FXF_APPEND != filetransfer.FXF_APPEND:
-            m = filter(lambda x: x.find('a')<0, m)
-        else:
-            m = filter(lambda x: x.find('a')>=0, m)
-        # truncate flag
-        if flags & filetransfer.FXF_TRUNC != filetransfer.FXF_TRUNC:
-            m = filter(lambda x: x.find('w')<0, m)
-        return m
+            raise ValueError("Must have read flag, write flag, or both.")
+
+        mappings = ( (filetransfer.FXF_CREAT, os.O_CREAT),
+                     (filetransfer.FXF_EXCL, os.O_EXCL),
+                     (filetransfer.FXF_APPEND, os.O_APPEND),
+                     (filetransfer.FXF_TRUNC, os.O_TRUNC) )
+        for fflag, osflag in mappings:
+            if isInFlags(fflag):
+                newflags = newflags | osflag
+
+        return newflags
 
     def close(self):
         self.fd.close()
+
+    def readChunk(self, offset, length):
+        """
+        Read a chunk of data from the file 
+
+        @param offset: where to start reading
+        @param length: how much data to read
+        """
+        self.fd.seek(offset)
+        return self.fd.read(length)
+
+    def writeChunk(self, offset, data):
+        """
+        Write data to the file at the given offset
+
+        @param offset: where to start writing
+        @param data: the data to write in the file
+        """
+        self.fd.seek(offset)
+        self.fd.write(data)
+
+    def getAttrs(self):
+        raise NotImplementedError
+
+    def setAttrs(self, attrs=None):
+        raise NotImplementedError
