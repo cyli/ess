@@ -1,0 +1,27 @@
+# Run this server on a different port
+Port 2222
+ListenAddress 127.0.0.1
+
+# Use ssh protocol-2
+Protocol 2
+
+# HostKey (private key, not public) for protocol version 2
+HostKey /home/cyli/Projects/SFTP/configSSH/sshd_server_identity  
+
+# Authentication:
+LoginGraceTime 5   #shouldn't take very long to log in automatically
+PermitRootLogin no
+
+RSAAuthentication yes
+PubkeyAuthentication yes
+AuthorizedKeysFile  /home/cyli/Projects/SFTP/configSSH/ssh_client_identity.pub
+
+# More authentication stuff
+ChallengeResponseAuthentication no
+PasswordAuthentication no
+
+TCPKeepAlive yes
+
+Subsystem sftp /usr/lib/openssh/sftp-server
+
+UsePAM no
