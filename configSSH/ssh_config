@@ -1,0 +1,11 @@
+Host localhost.experimental
+    HostKeyAlias localhost.experimental
+    HostName localhost
+    CheckHostIP no
+    StrictHostKeyChecking no
+    IdentityFile ssh_client_identity
+    Port 2222
+    Protocol 2
+    HashKnownHosts no
+    GSSAPIAuthentication yes
+    GSSAPIDelegateCredentials no
