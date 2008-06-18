@@ -1,5 +1,6 @@
-import shelless
+import shelless, openSSHConfig
 import os
+from twisted.python.filepath import FilePath
 from twisted.trial import unittest
 from twisted.internet import reactor, defer, protocol
 from twisted.cred import portal, credentials, checkers
@@ -92,15 +93,39 @@ class TestTester(unittest.TestCase):
     """
 
     def setUp(self):
+        f = FilePath(self.mktemp())
+        f.createDirectory()
+        self.serverOptions, self.clientOptions = openSSHConfig.setupConfig(
+            f.path, 2222)
+
+        class MyPP(protocol.ProcessProtocol):
+            def __init__(self):
+                self.readyDeferred = defer.Deferred()
+                self.deferred = defer.Deferred()
+            def processEnded(self, reason):
+                self.deferred.callback("None")
+            def errReceived(self, data): #because openSSH prints on stderr
+                if "Server listening" in data:
+                    self.readyDeferred.callback("Ready")
+
+        self.pp = MyPP()
+        self.server = execCommand(self.pp, 
+                                  "/usr/sbin/sshd %s" % self.serverOptions)
         self.ssht = SSHTester()
     
+    def tearDown(self):
+        return self.pp.deferred
+
     def test_regSSH(self):
-        d = execCommand(self.ssht, "ssh suijin echo Hello")
-        d.addCallback(self.assertEqual, "Hello\n")
-        return d
+        self.pp.readyDeferred.addCallback(
+            lambda x: execCommand(self.ssht, 
+                                  'ssh %s echo Hello' % self.clientOptions))
+        self.ssht.deferred.addCallback(self.assertEqual, "Hello\n")
+        return self.ssht.deferred
 
     def test_regSFTP(self):
-        d = execCommand(self.ssht, "sftp suijin localhost")
+        self.pp.readyDeferred.addCallback(
+            lambda x: execCommand(self.ssht, "sftp %s" % self.clientOptions))
         self.ssht.write('exit\n')
         self.ssht.finish()
         return self.ssht.deferred
@@ -137,19 +162,22 @@ class TestShelllessSSH(TestSecured, unittest.TestCase):
     def realmFactory(self):
         return shelless.ShelllessSSHRealm()
 
+    def _checkFailure(self, failure):
+        error = failure.value
+        expected = 'does not provide shells or allow command execution'
+        self.assertTrue(expected in error.value or expected in error.data)
+        raise TesterError("ok!") 
+        # stupid hack to insure that failure condition raised
+
     def test_noshell(self):
         d = execCommand(self.ssht, "ssh -p %d localhost" % self.port)
-        d.addCallback(
-            lambda x: self.fail("Shell request to server should fail, "+
-                                "but instead got: %s" % x))
-        d.addErrback(lambda x: "Error here is good")
+        d.addErrback(self._checkFailure)
+        self.assertFailure(d, TesterError)
         return d
 
     def test_noexec(self):
         d = execCommand(self.ssht, 
                         'ssh -p %d localhost "ls"' % self.port)
-        d.addCallback(
-            lambda x: self.fail("Exec request to server should fail, "+
-                                "but instead got: %s" % x))
-        d.addErrback(lambda x: "Error here is good")
+        d.addErrback(self._checkFailure)
+        self.assertFailure(d, TesterError)
         return d
