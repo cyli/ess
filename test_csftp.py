@@ -414,14 +414,14 @@ class TestChrootedSFTPServer(TestChrooted, unittest.TestCase):
     def testOpenDirectory(self):
         """
         Make sure that what yielded is an iterable, and that trying to open
-        a file fails
+        a file (not directory) fails
         """
         self.assertRaises(csftp.ChrootedFSError, self.server.openDirectory,
                           "fileRoot")
         count = 0
         for path, longname, attrs in self.server.openDirectory("altlink"):
             count += 1
-            self.assertEquals(4, len(attrs.keys()))
+            self.assertEquals(6, len(attrs.keys()))
         self.assertEquals(1, count)
 
 
@@ -471,10 +471,9 @@ class TestChrootedSFTPFile(TestChrooted, unittest.TestCase):
             self.rootdir.child("fileRoot"), self.read)
         self.flagTester = self.sftpf.flagTranslator
 
-        def bitIn(lookingFor, flags):
-            return flags & lookingFor == lookingFor
 
-        self.bitIn = bitIn
+    def bitIn(self, lookingFor, flags):
+        return flags & lookingFor == lookingFor
 
 
     def test_flagTranslator_noReadOrWrite(self):

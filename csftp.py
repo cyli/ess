@@ -3,16 +3,18 @@ import os
 from zope.interface import implements
 from twisted.cred import portal
 from twisted.conch.interfaces import ISFTPServer, ISFTPFile
-from twisted.python import log, components, filepath
+from twisted.python import components, filepath
 from twisted.conch.ssh import filetransfer
 from twisted.conch.ls import lsLine
 
 
-def simplifyAttributes(filePath):
-    return {"size": filePath.statinfo.st_size,
+def _simplifyAttributes(filePath):
+    return {"size": filePath.getsize(),
+            "uid": filePath.getUserID(),
+            "gid": filePath.getGroupID(),
             "permissions": filePath.statinfo.st_mode,
-            "atime": filePath.statinfo.st_atime,
-            "mtime": filePath.statinfo.st_mtime}
+            "atime": filePath.getAccessTime(),
+            "mtime": filePath.getModificationTime()}
 
 
 
@@ -122,12 +124,16 @@ class FilePath(filepath.FilePath):
 FilePath.clonePath = FilePath
 
 
+
 class ChrootedFSError(Exception):
     pass
 
 
 
 class ChrootedSSHRealm(object):
+    """
+    A realm that returns a ChrootedUser as an avatar
+    """
     implements(portal.IRealm)
 
     def __init__(self, root):
@@ -164,10 +170,6 @@ class ChrootedSFTPServer:
     def __init__(self, avatar):
         self.avatar = avatar
         self.root = FilePath(self.avatar.root)
-
-
-    def gotVersion(self, otherVersion, extData):
-        return {}
 
 
     def _getFilePath(self, path):
@@ -211,19 +213,100 @@ class ChrootedSFTPServer:
         return False
 
 
-    def realPath(self, path):
-        """
-        Despite what the interface says, this function will only return
-        the path relative to the root.  However, if it is a link, it will
-        return the target of the link rather than the link.  Absolute paths
-        will be treated as if they were relative to the root.
+    def gotVersion(self, otherVersion, extData):
+        return {}
 
-        @param path: the path (as a string) to be converted into a string
+
+    def openFile(self, filename, flags, attrs):
+        fp = self._getFilePath(filename)
+        return ChrootedSFTPFile(fp, flags, attrs)
+
+
+    def removeFile(self, filename):
+        """
+        Remove the given file if it is either a file or a symlink.
+
+        @param filename: the filename/path as a string
+        @raises ChrootedFSError: if the file does not exist, or is a directory
+        """
+        fp = self._getFilePath(filename)
+        if not (fp.exists() or fp.islink()):  # a broken link does not "exist"
+            raise ChrootedFSError("%s does not exist" % filename)
+        if fp.isdir():
+            raise ChrootedFSError("%s is a directory" % filename)
+        fp.remove()
+
+
+    def renameFile(self, oldname, newname):
+        """
+        Rename the given file/directory/link.
+
+        @param oldpath: the current location of the file/directory/link
+        @param newpath: the new location of the file/directory/link
+        """
+        newFP = self._getFilePath(newname)
+        if newFP.exists():
+            raise ChrootedFSError("%s already exists" % newname)
+        oldFP = self._getFilePath(oldname)
+        if not (oldFP.exists() or oldFP.islink()):
+            raise ChrootedFSError("%s does not exist" % oldname)
+        oldFP.moveTo(newFP)
+
+
+    def makeDirectory(self, path, attrs=None):
+        """
+        Make a directory.  Ignores the attributes.
         """
         fp = self._getFilePath(path)
-        if self._islink(fp=fp):
-            fp = fp.realpath()
-        return self._getRelativePath(fp)
+        if fp.exists():
+            raise ChrootedFSError("%s already exists." % path)
+        fp.createDirectory()
+
+
+    def removeDirectory(self, path):
+        """
+        Remove a directory non-recursively.
+
+        @param path: the path of the directory
+        @raises ChrootedFSError: if the directory is not empty or it isn't
+        is a directory
+        """
+        # The problem comes when path is a link that points to a directory:
+        # 1) If the target is a directory in the root directory, and said
+        #    directory is empty, the link should not be removed because it
+        #    is a link.
+        # 2) If the target is a directory outside the root directory, then
+        #    the user should not really be able to tell.
+        fp = self._getFilePath(path)
+        if (not fp.isdir()) or self._islink(fp):
+            raise ChrootedFSError("%s is not a directory")
+        if fp.children():
+            raise ChrootedFSError("%s is not empty.")
+        fp.remove()
+
+
+    def openDirectory(self, path):
+        fp = self._getFilePath(path)
+        if not fp.isdir():
+            raise ChrootedFSError("%s is not a directory." % path)
+        return ChrootedDirectory(self, fp)
+
+
+    def getAttrs(self, path, followLinks=True):
+        """
+        Get attributes of the path.
+
+        @param path: the path for which attribute are to be gotten
+        @param followLinks: if false, then does not return the attributes
+        of the target of a link, but rather the link
+        """
+        fp = self._getFilePath(path)
+        fp.restat(followLink=followLinks)
+        return _simplifyAttributes(fp)
+
+
+    def setAttrs(self, path, attrs):
+        raise NotImplementedError
 
 
     def readLink(self, path):
@@ -261,95 +344,24 @@ class ChrootedSFTPServer:
         tp.linkTo(lp)
 
 
-    def removeFile(self, filename):
+    def realPath(self, path):
         """
-        Remove the given file if it is either a file or a symlink.
+        Despite what the interface says, this function will only return
+        the path relative to the root.  However, if it is a link, it will
+        return the target of the link rather than the link.  Absolute paths
+        will be treated as if they were relative to the root.
 
-        @param filename: the filename/path as a string
-        @raises ChrootedFSError: if the file does not exist, or is a directory
-        """
-        fp = self._getFilePath(filename)
-        if not (fp.exists() or fp.islink()):  # a broken link does not "exist"
-            raise ChrootedFSError("%s does not exist" % filename)
-        if fp.isdir():
-            raise ChrootedFSError("%s is a directory" % filename)
-        fp.remove()
-
-
-    def removeDirectory(self, path):
-        """
-        Remove a directory non-recursively.
-
-        @param path: the path of the directory
-        @raises ChrootedFSError: if the directory is not empty or it isn't
-        is a directory
-        """
-        # The problem comes when path is a link that points to a directory:
-        # 1) If the target is a directory in the root directory, and said
-        #    directory is empty, the link should not be removed because it
-        #    is a link.
-        # 2) If the target is a directory outside the root directory, then
-        #    the user should not really be able to tell.
-        fp = self._getFilePath(path)
-        if (not fp.isdir()) or self._islink(fp):
-            raise ChrootedFSError("%s is not a directory")
-        if fp.children():
-            raise ChrootedFSError("%s is not empty.")
-        fp.remove()
-
-
-    def makeDirectory(self, path, attrs=None):
-        """
-        Make a directory.  Ignores the attributes.
+        @param path: the path (as a string) to be converted into a string
         """
         fp = self._getFilePath(path)
-        if fp.exists():
-            raise ChrootedFSError("%s already exists." % path)
-        fp.createDirectory()
-
-
-    def renameFile(self, oldname, newname):
-        """
-        Rename the given file/directory/link.
-
-        @param oldpath: the current location of the file/directory/link
-        @param newpath: the new location of the file/directory/link
-        """
-        newFP = self._getFilePath(newname)
-        if newFP.exists():
-            raise ChrootedFSError("%s already exists" % newname)
-        oldFP = self._getFilePath(oldname)
-        if not (oldFP.exists() or oldFP.islink()):
-            raise ChrootedFSError("%s does not exist" % oldname)
-        oldFP.moveTo(newFP)
-
-
-    def getAttrs(self, path, followLinks=True):
-        """
-        Get attributes of the path.
-
-        @param path: the path for which attribute are to be gotten
-        @param followLinks: if false, then does not return the attributes
-        of the target of a link, but rather the link
-        """
-        fp = self._getFilePath(path)
-        fp.restat(followLink=followLinks)
-        return simplifyAttributes(fp)
-
-
-    def setAttrs(self, path, attrs):
-        raise NotImplementedError
+        if self._islink(fp=fp):
+            fp = fp.realpath()
+        return self._getRelativePath(fp)
 
 
     def extendedRequest(self, extendedName, extendedData):
         raise NotImplementedError
 
-
-    def openDirectory(self, path):
-        fp = self._getFilePath(path)
-        if not fp.isdir():
-            raise ChrootedFSError("%s is not a directory." % path)
-        return ChrootedDirectory(self, fp)
 
 components.registerAdapter(ChrootedSFTPServer, ChrootedUser,
                            filetransfer.ISFTPServer)
@@ -381,6 +393,8 @@ class ChrootedDirectory:
 
 
     def next(self):
+        # TODO: problem - what if the user that logs in is not a user in the
+        # system?
         if not self.files:
             raise StopIteration
         f = self.files.pop(0)
@@ -391,7 +405,7 @@ class ChrootedDirectory:
         f.restat(followLink=followLink)
         longname = lsLine(f.basename(), f.statinfo)
         longname = longname[:15] + longname[32:]  # remove uid and gid
-        return (f.basename(), longname, simplifyAttributes(f))
+        return (f.basename(), longname, _simplifyAttributes(f))
 
 
     def close(self):
@@ -416,7 +430,7 @@ class ChrootedSFTPFile:
 
     def flagTranslator(self, flags):
         """
-        Translate file flags to Python file opening modes
+        Translate filetransfer flags to Python file opening modes
         @param flags: flags to translate into file opening mode
         """
         def isInFlags(lookingFor):
