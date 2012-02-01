@@ -23,35 +23,43 @@ class ShelllessUser(ConchUser):
         ConchUser.__init__(self)
         self.channelLookup["session"] = ShelllessSession
 
+
     def logout(self):
         pass   # nothing to do
 
 
+
 class ShelllessSession(session.SSHSession):
-    
+
     name = 'shellessSession'
 
     def __init__(self, *args, **kw):
         session.SSHSession.__init__(self, *args, **kw)
-        
+
+
     def _noshell(self):
+        print 'rejecting'
         if not self.closing:
             self.write("This server does not provide shells "
                        "or allow command execution.\n")
             self.loseConnection()
         return 0
 
+
     def request_shell(self, data):
         log.msg("shell request rejected")
         return self._noshell()
+
 
     def request_exec(self, data):
         log.msg("execution request rejected")
         return self._noshell()
 
+
     def request_pty_req(self, data):
         log.msg("pty request rejected")
         return self._noshell()
+
 
     def request_window_change(self, data):
         log.msg("window change request rejected")
