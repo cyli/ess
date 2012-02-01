@@ -83,7 +83,7 @@ RSAAuthentication yes
 PubkeyAuthentication yes
 
 # Just use the public key of the key used to log in
-AuthorizedKeysFile  %(clientPubkeyFile)s 
+AuthorizedKeysFile  %(clientPubkeyFile)s
 
 ChallengeResponseAuthentication no
 PasswordAuthentication no
@@ -125,22 +125,22 @@ def setupConfig(directoryPath, port):
     hostname = 'localhost.sftp.experimental'
 
     sshdConfigFile = f.child("sshd_config")
-    sshdConfigFile.setContent( sshd_config % {
-            'port' : port,
-            'hostkeyFile' : hostkey.path,
-            'clientPubkeyFile' : knownHosts.path } )
+    sshdConfigFile.setContent(sshd_config % {
+            'port': port,
+            'hostkeyFile': hostkey.path,
+            'clientPubkeyFile': knownHosts.path})
 
     sshConfigFile = f.child("ssh_config")
-    sshConfigFile.setContent( ssh_config % {
-            'port' : port,
-            'clientPrivkeyFile' : clientID.path,
-            'hostname' : hostname } )
+    sshConfigFile.setContent(ssh_config % {
+            'port': port,
+            'clientPrivkeyFile': clientID.path,
+            'hostname': hostname})
 
     serverOptions = "-de -f %s" % sshdConfigFile.path
     clientOptions = "-F %s %s" % (sshConfigFile.path, hostname)
 
-    return ( serverOptions, clientOptions )
+    return (serverOptions, clientOptions)
 
-#server command:  /usr/sbin/sshd 
+#server command:  /usr/sbin/sshd
 #client commands: ssh -F ssh_config localhost.sftp.experimental
 #                 sftp -F ssh_config localhost:sftp.experimental
