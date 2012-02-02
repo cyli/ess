@@ -500,7 +500,8 @@ class ChrootedSFTPFile:
 
     def setAttrs(self, attrs=None):
         """
-        This must return something, in order for write to be able to happen
+        This must return something, in order for certain write to be able to
+        happen
         """
         pass
         #raise NotImplementedError
