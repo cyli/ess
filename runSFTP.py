@@ -5,6 +5,7 @@ from zope import interface
 from twisted.internet import defer
 from twisted.cred import credentials, checkers, portal
 from twisted.internet import reactor
+from twisted.python.log import startLogging
 
 class AlwaysAllow(object):
     credentialInterfaces = credentials.IUsernamePassword,
@@ -14,7 +15,9 @@ class AlwaysAllow(object):
         return defer.succeed(credentials.username)
 
 
-p = portal.Portal(csftp.ChrootedSSHRealm('.'))
+p = portal.Portal(csftp.ChrootedSSHRealm('TEMP/ROOT'))
 p.registerChecker(AlwaysAllow())
 reactor.listenTCP(2222, ConchFactory(p))
+startLogging(open('log.txt', 'w+'))
 reactor.run()
+
