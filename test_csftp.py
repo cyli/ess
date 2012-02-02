@@ -1,9 +1,11 @@
 import csftp
-from test_shelless import execCommand, TestSecured, TesterError
+from test_shelless import execCommand, TestSecured
+
 import os
+
+
 from twisted.trial import unittest
 #from twisted.python.filepath import FilePath
-from csftp import FilePath
 from twisted.test import test_paths
 from twisted.conch.ssh import filetransfer
 
@@ -198,7 +200,7 @@ class TestChrooted:
             fp.create()
             fp.setContent(fp.path)
 
-        self.tempdir = FilePath(self.mktemp())
+        self.tempdir = csftp.FilePath(self.mktemp())
         self.rootdir = self.tempdir.child("root")
         self.rootdir.child("subdir").makedirs()
         altdir = self.tempdir.child("alt")
@@ -564,7 +566,7 @@ class TestChrootedSFTP(TestSecured, unittest.TestCase):
 
 
     def realmFactory(self):
-        self.rootdir = FilePath(self.mktemp())
+        self.rootdir = csftp.FilePath(self.mktemp())
         self.rootdir.createDirectory()
         return csftp.ChrootedSSHRealm(self.rootdir.path)
 
