@@ -1,5 +1,7 @@
-import shelless
 import os
+
+from csftp import shelless
+
 from zope.interface import implements
 from twisted.cred import portal
 from twisted.conch.interfaces import ISFTPServer, ISFTPFile
