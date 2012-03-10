@@ -1,4 +1,4 @@
-import shelless
+from csftp import shelless
 
 import sys
 
