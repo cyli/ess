@@ -1,4 +1,4 @@
-from csftp import server
+from csftp import server, filepath
 from test_shelless import execCommand, TestSecured
 
 import os
@@ -24,7 +24,7 @@ class TestFilePath(test_paths.FilePathTestCase):
         """
         Verify that passing both modes and flags will raise an error
         """
-        self.path = server.FilePath(self.path.path)
+        self.path = filepath.FilePath(self.path.path)
         self.assertRaises(ValueError, self.path.child('file1').open,
                           mode='w+', flags=os.O_RDWR)
 
@@ -33,7 +33,7 @@ class TestFilePath(test_paths.FilePathTestCase):
         """
         Verify that nonexistant file opened without the create flag will fail
         """
-        self.path = server.FilePath(self.path.path)
+        self.path = filepath.FilePath(self.path.path)
         created = self.path.child('createdFile')
         self.assertRaises((OSError, IOError), created.open, flags=os.O_RDWR)
 
@@ -43,7 +43,7 @@ class TestFilePath(test_paths.FilePathTestCase):
         Verify that file opened with no read/write flags will default to
         reading
         """
-        self.path = server.FilePath(self.path.path)
+        self.path = filepath.FilePath(self.path.path)
         created = self.path.child('createdFile')
         f = created.open(flags=os.O_CREAT)
         self.failUnless(created.exists())
@@ -55,7 +55,7 @@ class TestFilePath(test_paths.FilePathTestCase):
         """
         Verify that file opened write only will not be readable.
         """
-        self.path = server.FilePath(self.path.path)
+        self.path = filepath.FilePath(self.path.path)
         f = self.path.child("file1").open(flags=os.O_WRONLY)
         f.write('writeonly')
         self.assertRaises((OSError, IOError), f.read)
@@ -67,7 +67,7 @@ class TestFilePath(test_paths.FilePathTestCase):
         Verify that file opened with no write can be read from but not
         written to
         """
-        self.path = server.FilePath(self.path.path)
+        self.path = filepath.FilePath(self.path.path)
         f = self.path.child("file1").open(flags=os.O_APPEND)
         self.assertEquals(f.read(), 'file 1')
         self.assertRaises((OSError, IOError), f.write, "append")
@@ -79,7 +79,7 @@ class TestFilePath(test_paths.FilePathTestCase):
         Verify that file opened with the append flag and the writeonly
         flag can be appended to but not overwritten, and not read from
         """
-        self.path = server.FilePath(self.path.path)
+        self.path = filepath.FilePath(self.path.path)
         f = self.path.child("file1").open(flags=os.O_WRONLY | os.O_APPEND)
         self.assertRaises((OSError, IOError), f.read)
         f.write('append')
@@ -96,7 +96,7 @@ class TestFilePath(test_paths.FilePathTestCase):
         Verify that file opened with readwrite and append is both appendable
         to and readable from
         """
-        self.path = server.FilePath(self.path.path)
+        self.path = filepath.FilePath(self.path.path)
         f = self.path.child("file1").open(flags=os.O_RDWR | os.O_APPEND)
         f.write('append')
         f.seek(0)
@@ -110,7 +110,7 @@ class TestFilePath(test_paths.FilePathTestCase):
         """
         Verify that file opened readwrite is both readable and writable.
         """
-        self.path = server.FilePath(self.path.path)
+        self.path = filepath.FilePath(self.path.path)
         created = self.subfile("createdFile")
         created.write("0000000000000000")
         created.close()
@@ -126,7 +126,7 @@ class TestFilePath(test_paths.FilePathTestCase):
         """
         Verify that file called with truncate will be overwritten
         """
-        self.path = server.FilePath(self.path.path)
+        self.path = filepath.FilePath(self.path.path)
         f = self.path.child("file1").open(flags=os.O_RDWR | os.O_TRUNC)
         f.write('overwrite')
         f.seek(0)
@@ -138,14 +138,14 @@ class TestFilePath(test_paths.FilePathTestCase):
         """
         Verify that file opened with the exclusive flag will raise an error
         """
-        self.path = server.FilePath(self.path.path)
+        self.path = filepath.FilePath(self.path.path)
         self.assertRaises((OSError, IOError), self.path.child("file1").open,
                           flags=(os.O_RDWR | os.O_CREAT | os.O_EXCL))
 
 
     def test_walk(self):  # isn't a replacement exactly
         self.setUpLinks()
-        self.path = server.FilePath(self.path.path)
+        self.path = filepath.FilePath(self.path.path)
         test_paths.FilePathTestCase.test_walk(self)
 
 
@@ -154,7 +154,7 @@ class TestFilePath(test_paths.FilePathTestCase):
         Verify that a symlink is correctly normalized
         """
         self.setUpLinks()
-        self.path = server.FilePath(self.path.path)
+        self.path = filepath.FilePath(self.path.path)
         self.assertEquals(self.path.child("sub1.link").realpath(),
                           self.path.child("sub1"))
         self.assertEquals(self.path.child("sub1").realpath(),
@@ -163,7 +163,7 @@ class TestFilePath(test_paths.FilePathTestCase):
 
     def testStatCache(self):
         self.setUpLinks()
-        self.path = server.FilePath(self.path.path)
+        self.path = filepath.FilePath(self.path.path)
         test_paths.FilePathTestCase.testStatCache(self)
         sub = self.path.child("sub1")
         sublink = self.path.child("sub1.link")
@@ -200,7 +200,7 @@ class TestChrooted:
             fp.create()
             fp.setContent(fp.path)
 
-        self.tempdir = server.FilePath(self.mktemp())
+        self.tempdir = filepath.FilePath(self.mktemp())
         self.rootdir = self.tempdir.child("root")
         self.rootdir.child("subdir").makedirs()
         altdir = self.tempdir.child("alt")
@@ -290,8 +290,7 @@ class TestChrootedSFTPServer(TestChrooted, unittest.TestCase):
         outside the root directory).
         """
         for failureCase in ("fileRoot", "subdir", "fileAltLink"):
-            self.assertRaises(server.ChrootedFSError, self.server.readLink,
-                              failureCase)
+            self.assertRaises(IOError, self.server.readLink, failureCase)
         self.assertEquals(self.server.readLink("fileRootLink"), "/fileRoot")
 
 
@@ -304,8 +303,7 @@ class TestChrootedSFTPServer(TestChrooted, unittest.TestCase):
         self.failUnless(self.rootdir.child("fileRootLink2").islink())
         self.assertEquals(self.server.readLink("fileRootLink2"), "/fileRoot")
         for ln, tg in (("fileRootLink", "fileRoot"), ("fakeLink", "fake")):
-            self.assertRaises(server.ChrootedFSError,
-                              self.server.makeLink, ln, tg)
+            self.assertRaises(IOError, self.server.makeLink, ln, tg)
 
 
     def testRemoveFile(self):
@@ -315,10 +313,9 @@ class TestChrootedSFTPServer(TestChrooted, unittest.TestCase):
         for fp in self.server.root.walk():
             try:
                 self.server.removeFile(self.server._getRelativePath(fp))
-            except server.ChrootedFSError:
+            except IOError:
                 self.failUnless(fp.isdir(), "failure removing " + str(fp))
-        self.assertRaises(server.ChrootedFSError,
-                          self.server.removeFile, "fileRoot")
+        self.assertRaises(IOError, self.server.removeFile, "fileRoot")
         for fp in self.server.root.walk():
             self.failUnless(fp.isdir())
 
@@ -331,7 +328,7 @@ class TestChrootedSFTPServer(TestChrooted, unittest.TestCase):
         """
         try:
             self.server.removeDirectory("subdir")
-        except server.ChrootedFSError:
+        except IOError:
             self.fail("Removing empty directory failed.")
 
         failcases = [
@@ -339,14 +336,13 @@ class TestChrootedSFTPServer(TestChrooted, unittest.TestCase):
             "fileRootLink",  # should not remove links
             "altlink"]  # should not remove non-empty directories
         for case in failcases:
-            self.assertRaises(server.ChrootedFSError,
-                              self.server.removeDirectory, case)
+            self.assertRaises(IOError, self.server.removeDirectory, case)
 
         for child in self.tempdir.child("alt").children():
             child.remove()
         try:
             self.server.removeDirectory("altlink")
-        except server.ChrootedFSError:
+        except IOError:
             self.fail("Removing empty 'fake directory' failed.")
 
 
@@ -355,11 +351,11 @@ class TestChrootedSFTPServer(TestChrooted, unittest.TestCase):
         Verify that makeDirectory creates a directory if it doesn't
         already exist
         """
-        self.assertRaises(server.ChrootedFSError, self.server.makeDirectory,
+        self.assertRaises(IOError, self.server.makeDirectory,
                           "subdir")
         try:
             self.server.makeDirectory("subdir2")
-        except server.ChrootedFSError:
+        except IOError:
             self.fail("Creating a directory failed.")
 
 
@@ -371,7 +367,7 @@ class TestChrootedSFTPServer(TestChrooted, unittest.TestCase):
             try:
                 newname = oldname + ".ren"
                 self.server.renameFile(oldname, newname)
-            except server.ChrootedFSError:
+            except IOError:
                 self.fail("renaming file %s failed." % oldname)
             self.failIf(self.server._getFilePath(oldname).exists(),
                         "%s still exists" % oldname)
@@ -418,7 +414,7 @@ class TestChrootedSFTPServer(TestChrooted, unittest.TestCase):
         Make sure that what yielded is an iterable, and that trying to open
         a file (not directory) fails
         """
-        self.assertRaises(server.ChrootedFSError, self.server.openDirectory,
+        self.assertRaises(IOError, self.server.openDirectory,
                           "fileRoot")
         count = 0
         for path, longname, attrs in self.server.openDirectory("altlink"):
@@ -532,7 +528,7 @@ class TestChrootedSFTPFile(TestChrooted, unittest.TestCase):
         """
         try:
             self.sftpf.close()
-        except server.ChrootedFSError:
+        except IOError:
             self.fail("Opening/closing ChrootedSFTPFile fails")
 
 
@@ -566,7 +562,7 @@ class TestChrootedSFTP(TestSecured, unittest.TestCase):
 
 
     def realmFactory(self):
-        self.rootdir = server.FilePath(self.mktemp())
+        self.rootdir = filepath.FilePath(self.mktemp())
         self.rootdir.createDirectory()
         return server.ChrootedSSHRealm(self.rootdir.path)
 
@@ -598,7 +594,7 @@ class TestChrootedSFTP(TestSecured, unittest.TestCase):
             data = data.split("\n", 1)[-1]  # first line is "sftp> ls"
             expected = self.rootdir.children()
             expected.sort()
-            got = [server.FilePath(file) for file in data.split()]
+            got = [filepath.FilePath(file) for file in data.split()]
             got.sort()
             self.assertEquals(len(got), len(expected))
             for i in range(len(got)):
