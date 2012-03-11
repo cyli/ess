@@ -1,4 +1,4 @@
-import csftp
+from csftp import server
 
 from twisted.conch.manhole_ssh import ConchFactory
 from zope import interface
@@ -15,7 +15,7 @@ class AlwaysAllow(object):
         return defer.succeed(credentials.username)
 
 
-p = portal.Portal(csftp.ChrootedSSHRealm('TEMP/ROOT'))
+p = portal.Portal(server.ChrootedSSHRealm('TEMP/ROOT'))
 p.registerChecker(AlwaysAllow())
 reactor.listenTCP(2222, ConchFactory(p))
 startLogging(open('log.txt', 'w+'))
