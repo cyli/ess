@@ -132,33 +132,6 @@ class ChrootedFSError(Exception):
 
 
 
-class ChrootedSSHRealm(object):
-    """
-    A realm that returns a ChrootedUser as an avatar
-    """
-    implements(portal.IRealm)
-
-    def __init__(self, root):
-        self.root = root
-
-
-    def requestAvatar(self, avatarID, mind, *interfaces):
-        user = ChrootedUser(self.root)
-        return interfaces[0], user, user.logout
-
-
-
-class ChrootedUser(shelless.ShelllessUser):
-    """
-    A shell-less user that does not answer any global requests.
-    """
-    def __init__(self, root):
-        shelless.ShelllessUser.__init__(self)
-        self.subsystemLookup["sftp"] = filetransfer.FileTransferServer
-        self.root = root
-
-
-
 class ChrootedSFTPServer:
     implements(ISFTPServer)
     """
@@ -365,9 +338,6 @@ class ChrootedSFTPServer:
         raise NotImplementedError
 
 
-components.registerAdapter(ChrootedSFTPServer, ChrootedUser,
-                           filetransfer.ISFTPServer)
-
 
 #Figure out a way to test this
 class ChrootedDirectory:
@@ -507,3 +477,34 @@ class ChrootedSFTPFile:
         """
         pass
         #raise NotImplementedError
+
+
+
+class ChrootedSSHRealm(object):
+    """
+    A realm that returns a ChrootedUser as an avatar
+    """
+    implements(portal.IRealm)
+
+    def __init__(self, root):
+        self.root = root
+
+
+    def requestAvatar(self, avatarID, mind, *interfaces):
+        user = ChrootedUser(self.root)
+        return interfaces[0], user, user.logout
+
+
+
+class ChrootedUser(shelless.ShelllessUser):
+    """
+    A shell-less user that does not answer any global requests.
+    """
+    def __init__(self, root):
+        shelless.ShelllessUser.__init__(self)
+        self.subsystemLookup["sftp"] = filetransfer.FileTransferServer
+        self.root = root
+
+
+components.registerAdapter(ChrootedSFTPServer, ChrootedUser,
+                           filetransfer.ISFTPServer)
