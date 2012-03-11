@@ -1,11 +1,12 @@
 import os
 
 from csftp import shelless
+from csftp.filepath import FilePath
 
 from zope.interface import implements
 from twisted.cred import portal
 from twisted.conch.interfaces import ISFTPServer, ISFTPFile
-from twisted.python import components, filepath
+from twisted.python import components
 from twisted.conch.ssh import filetransfer
 from twisted.conch.ls import lsLine
 
@@ -17,118 +18,6 @@ def _simplifyAttributes(filePath):
             "permissions": filePath.statinfo.st_mode,
             "atime": filePath.getAccessTime(),
             "mtime": filePath.getModificationTime()}
-
-
-
-class FilePath(filepath.FilePath):
-
-    def open(self, mode=None, flags=None):
-        """
-        Opens self with either a given mode or given flags (such as
-        os.O_RDONLY, os.O_CREAT, etc or-ed together - see os module
-        documentation).  If both are passed, raises an error.
-
-        If flags are passed, a mode will automatically be generated from
-        the flags.  By default, the file will be readable unless os.O_WRONLY
-        is passed (without also passing os.O_RDWR - passing os.O_RDONLY also
-        will do nothing).  A file will only be writable (appending or
-        otherwise) if os.WRONLY or os.RDWR flags are passed.
-
-        @returns: file object to self
-        @raises ValueError if both mode and flags are passed
-        """
-        # User provided flags should not be used with a user given mode because
-        # certain combinations of modes and flags will raises very unhelpful
-        # "Invalid argument" type errors.  Besides, modes can be generated
-        # from the flags given.
-        if flags is None:
-            if not mode:
-                mode = 'r'
-            if self.alwaysCreate:
-                if 'a' in mode:
-                    raise ValueError(
-                        "Appending not supported when alwaysCreate == True")
-                return self.create()
-            return open(self.path, mode + 'b')
-        else:
-            if mode:
-                raise ValueError("Either mode or flags accepted, but not both")
-
-            def isInFlags(lookingFor):
-                return flags & lookingFor == lookingFor
-
-            # Given that os.open returns only a file descriptor,
-            # FilePath.open returns a file object, a mode must be passed
-            # to os.fdopen - this will be determined based on the flags.
-
-            # Modes we care about: 'r', 'w', 'a', 'r+', 'a+'
-            # We don't care about w+, because if os.open is called with
-            # os.O_CREAT the file will already have been created.  If that
-            # flag was not passed, then we don't want the file to be created
-            # anyway.
-
-            if isInFlags(os.O_RDWR):
-                if isInFlags(os.O_APPEND):
-                    mode = 'a+'
-                else:
-                    mode = 'r+'
-            elif isInFlags(os.O_WRONLY):
-                if isInFlags(os.O_APPEND):
-                    mode = 'a'
-                else:
-                    mode = 'w'
-            else:
-                mode = 'r'
-
-            return os.fdopen(os.open(self.path, flags), mode)
-
-
-    def restat(self, reraise=True, followLink=True):
-        try:
-            self.statFollowLink = followLink
-            statFunc = os.stat
-            if not followLink:
-                statFunc = os.lstat
-            self.statinfo = statFunc(self.path)
-        except OSError:
-            self.statinfo = 0
-            if reraise:
-                raise
-
-
-    def walk(self):
-        yield self
-        if self.isdir() and not self.islink():
-            for c in self.children():
-                for subc in c.walk():
-                    yield subc
-
-
-    def realpath(self):
-        """
-        Returns the real path as a FilePath.  If self is a link, returns the
-        a FilePath of the ultimate target (follows all successive links - for
-        example, if target is a link, return that link's target and so on).
-        If self is not a link, simply returns self.
-
-        This relies on os.path.realpath, which currently claims to work only
-        in Unix and Mac but which is defined in Windows.
-
-        Note: os.path.realpath does not resolve links in the middle of paths.
-        For instance, given path /x/y/z, if y is a symlink that points to w,
-        os.path.realpath (and hence FilePath.realpath) will return /x/y/z
-        rather than /x/w/z.
-
-        @return: a FilePath
-        """
-        return self.clonePath(os.path.realpath(self.path))
-
-FilePath.clonePath = FilePath
-
-
-
-class ChrootedFSError(Exception):
-    pass
 
 
 
@@ -202,13 +91,13 @@ class ChrootedSFTPServer:
         Remove the given file if it is either a file or a symlink.
 
         @param filename: the filename/path as a string
-        @raises ChrootedFSError: if the file does not exist, or is a directory
+        @raises IOError: if the file does not exist, or is a directory
         """
         fp = self._getFilePath(filename)
         if not (fp.exists() or fp.islink()):  # a broken link does not "exist"
-            raise ChrootedFSError("%s does not exist" % filename)
+            raise IOError("%s does not exist" % filename)
         if fp.isdir():
-            raise ChrootedFSError("%s is a directory" % filename)
+            raise IOError("%s is a directory" % filename)
         fp.remove()
 
 
@@ -221,10 +110,10 @@ class ChrootedSFTPServer:
         """
         newFP = self._getFilePath(newname)
         if newFP.exists():
-            raise ChrootedFSError("%s already exists" % newname)
+            raise IOError("%s already exists" % newname)
         oldFP = self._getFilePath(oldname)
         if not (oldFP.exists() or oldFP.islink()):
-            raise ChrootedFSError("%s does not exist" % oldname)
+            raise IOError("%s does not exist" % oldname)
         oldFP.moveTo(newFP)
 
 
@@ -234,7 +123,7 @@ class ChrootedSFTPServer:
         """
         fp = self._getFilePath(path)
         if fp.exists():
-            raise ChrootedFSError("%s already exists." % path)
+            raise IOError("%s already exists." % path)
         fp.createDirectory()
 
 
@@ -243,7 +132,7 @@ class ChrootedSFTPServer:
         Remove a directory non-recursively.
 
         @param path: the path of the directory
-        @raises ChrootedFSError: if the directory is not empty or it isn't
+        @raises IOError: if the directory is not empty or it isn't
         is a directory
         """
         # The problem comes when path is a link that points to a directory:
@@ -254,16 +143,16 @@ class ChrootedSFTPServer:
         #    the user should not really be able to tell.
         fp = self._getFilePath(path)
         if (not fp.isdir()) or self._islink(fp):
-            raise ChrootedFSError("%s is not a directory")
+            raise IOError("%s is not a directory")
         if fp.children():
-            raise ChrootedFSError("%s is not empty.")
+            raise IOError("%s is not empty.")
         fp.remove()
 
 
     def openDirectory(self, path):
         fp = self._getFilePath(path)
         if not fp.isdir():
-            raise ChrootedFSError("%s is not a directory." % path)
+            raise IOError("%s is not a directory." % path)
         return ChrootedDirectory(self, fp)
 
 
@@ -293,29 +182,29 @@ class ChrootedSFTPServer:
         an error because no indication should be given that there are any
         files outside the root directory).
 
-        @raises ChrootedFSError: if the path is not a link, or is a link to
+        @raises IOError: if the path is not a link, or is a link to
         a file/directory outside the root directory
         """
         fp = self._getFilePath(path)
         rp = self._getFilePath(self.realPath(path))
         if fp.exists() and fp != rp:
             return self._getRelativePath(rp)
-        raise ChrootedFSError("%s is not a link." % path)
+        raise IOError("%s is not a link." % path)
 
 
     def makeLink(self, linkPath, targetPath):
         """
         Create a symbolic link from linkPath to targetPath.
 
-        @raises ChrootedFSError: if the linkPath already exists, if the
+        @raises IOError: if the linkPath already exists, if the
         targetPath does not exist
         """
         lp = self._getFilePath(linkPath)
         tp = self._getFilePath(targetPath)
         if lp.exists():
-            raise ChrootedFSError("%s already exists." % linkPath)
+            raise IOError("%s already exists." % linkPath)
         if not tp.exists():
-            raise ChrootedFSError("%s does not exist." % targetPath)
+            raise IOError("%s does not exist." % targetPath)
         tp.linkTo(lp)
 
 

@@ -1,5 +1,3 @@
-import os
-
 from csftp import server
 
 from zope.interface import implements
@@ -12,8 +10,6 @@ from twisted.application import internet
 from twisted.conch.openssh_compat.factory import OpenSSHFactory
 from twisted.conch.manhole_ssh import ConchFactory
 from twisted.cred import credentials, checkers, portal, strcred
-
-from twisted.python.filepath import FilePath
 
 
 class AlwaysAllow(object):
@@ -57,7 +53,7 @@ class CSFTPServiceMaker(object):
         Construct a TCPServer from a factory defined in myproject.
         """
         _portal = portal.Portal(
-            server.ChrootedSSHRealm(FilePath(options['root']).path),
+            server.ChrootedSSHRealm(server.FilePath(options['root']).path),
             options.get('credCheckers', [AlwaysAllow()]))
 
         if options['keyDirectory']:
