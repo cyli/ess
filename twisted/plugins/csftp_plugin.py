@@ -7,6 +7,7 @@ from twisted.python import usage
 from twisted.plugin import IPlugin
 from twisted.application.service import IServiceMaker
 from twisted.application import internet
+from twisted.conch.checkers import SSHPublicKeyDatabase
 from twisted.conch.openssh_compat.factory import OpenSSHFactory
 from twisted.conch.manhole_ssh import ConchFactory
 from twisted.cred import credentials, checkers, portal, strcred
@@ -18,7 +19,6 @@ class AlwaysAllow(object):
 
     def requestAvatarId(self, credentials):
         return defer.succeed(credentials.username)
-
 
 
 class Options(usage.Options, strcred.AuthOptionMixin):
@@ -41,7 +41,6 @@ class Options(usage.Options, strcred.AuthOptionMixin):
         })
 
 
-
 class CSFTPServiceMaker(object):
     implements(IServiceMaker, IPlugin)
     tapname = "csftp"
@@ -54,7 +53,7 @@ class CSFTPServiceMaker(object):
         """
         _portal = portal.Portal(
             server.ChrootedSSHRealm(server.FilePath(options['root']).path),
-            options.get('credCheckers', [AlwaysAllow()]))
+            options.get('credCheckers', [SSHPublicKeyDatabase()]))
 
         if options['keyDirectory']:
             print 'what'
