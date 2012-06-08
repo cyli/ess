@@ -56,7 +56,6 @@ class CSFTPServiceMaker(object):
             options.get('credCheckers', [SSHPublicKeyDatabase()]))
 
         if options['keyDirectory']:
-            print 'what'
             factory = OpenSSHFactory()
             factory.portal = _portal
             factory.dataRoot = options['keyDirectory']
