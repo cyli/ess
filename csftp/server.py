@@ -12,10 +12,14 @@ from twisted.conch.ls import lsLine
 
 
 def _simplifyAttributes(filePath):
+    # TODO - rather than just return the st_mode of the real path, should
+    # mask out the link bit of the link with the actual bit (file, directory)
+    realpath = filePath.realpath()
+    realpath.restat()
     return {"size": filePath.getsize(),
             "uid": filePath.getUserID(),
             "gid": filePath.getGroupID(),
-            "permissions": filePath.statinfo.st_mode,
+            "permissions": realpath.statinfo.st_mode,
             "atime": filePath.getAccessTime(),
             "mtime": filePath.getModificationTime()}
 
