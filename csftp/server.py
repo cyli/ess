@@ -338,7 +338,6 @@ class ChrootedSFTPFile:
         @param offset: where to start reading
         @param length: how much data to read
         """
-        print 'read'
         self.fd.seek(offset)
         return self.fd.read(length)
 
@@ -350,7 +349,6 @@ class ChrootedSFTPFile:
         @param offset: where to start writing
         @param data: the data to write in the file
         """
-        print 'write'
         self.fd.seek(offset)
         self.fd.write(data)
 

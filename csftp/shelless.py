@@ -2,7 +2,6 @@ from zope import interface
 from twisted.cred import portal
 from twisted.python import log
 from twisted.conch.avatar import ConchUser
-from twisted.conch.interfaces import ISession
 from twisted.conch.ssh import session
 
 
@@ -38,7 +37,6 @@ class ShelllessSession(session.SSHSession):
 
 
     def _noshell(self):
-        print 'rejecting'
         if not self.closing:
             self.write("This server does not provide shells "
                        "or allow command execution.\n")
