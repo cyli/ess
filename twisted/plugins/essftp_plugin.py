@@ -1,16 +1,16 @@
-from csftp import server
-
-from zope.interface import implements
-
-from twisted.internet import defer
-from twisted.python import usage
-from twisted.plugin import IPlugin
 from twisted.application.service import IServiceMaker
 from twisted.application import internet
 from twisted.conch.checkers import SSHPublicKeyDatabase
 from twisted.conch.openssh_compat.factory import OpenSSHFactory
 from twisted.conch.manhole_ssh import ConchFactory
 from twisted.cred import credentials, checkers, portal, strcred
+from twisted.internet import defer
+from twisted.python import usage
+from twisted.plugin import IPlugin
+
+from zope.interface import implements
+
+from ess import essftp
 
 
 class AlwaysAllow(object):
@@ -23,11 +23,11 @@ class AlwaysAllow(object):
 
 class Options(usage.Options, strcred.AuthOptionMixin):
     synopsis = "[options]"
-    longdesc = ("Makes a Chrooted SFTP Server.  If --root is not passed as a "
+    longdesc = ("Makes an EssFTP essftp.  If --root is not passed as a "
         "parameter, uses the current working directory.  If no auth service "
         "is specified, it will allow anyone in.")
     optParameters = [
-         ["root", "r", './', "Root directory"],
+         ["root", "r", './', "Root directory, as seen by clients"],
          ["port", "p", "8888", "Port on which to listen"],
          ["keyDirectory", "k", None, "Directory to look for host keys in.  "
             "If this is not provided, fake keys will be used."],
@@ -41,10 +41,10 @@ class Options(usage.Options, strcred.AuthOptionMixin):
         })
 
 
-class CSFTPServiceMaker(object):
+class EssFTPServiceMaker(object):
     implements(IServiceMaker, IPlugin)
-    tapname = "csftp"
-    description = "Chrooted SFTP Server"
+    tapname = "essftp"
+    description = "EssFTP Server (SFTP server, without the shell)"
     options = Options
 
     def makeService(self, options):
@@ -52,7 +52,7 @@ class CSFTPServiceMaker(object):
         Construct a TCPServer from a factory defined in myproject.
         """
         _portal = portal.Portal(
-            server.ChrootedSSHRealm(server.FilePath(options['root']).path),
+            essftp.EssRealm(essftp.FilePath(options['root']).path),
             options.get('credCheckers', [SSHPublicKeyDatabase()]))
 
         if options['keyDirectory']:
@@ -71,4 +71,4 @@ class CSFTPServiceMaker(object):
 # The name of this variable is irrelevant, as long as there is *some*
 # name bound to a provider of IPlugin and IServiceMaker.
 
-serviceMaker = CSFTPServiceMaker()
+serviceMaker = EssFTPServiceMaker()
