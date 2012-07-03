@@ -52,7 +52,7 @@ class EssFTPServiceMaker(object):
         Construct a TCPServer from a factory defined in myproject.
         """
         _portal = portal.Portal(
-            essftp.EssRealm(essftp.FilePath(options['root']).path),
+            essftp.EssFTPRealm(essftp.FilePath(options['root']).path),
             options.get('credCheckers', [SSHPublicKeyDatabase()]))
 
         if options['keyDirectory']:

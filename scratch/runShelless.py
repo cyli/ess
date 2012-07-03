@@ -1,15 +1,14 @@
-from csftp import shelless
-
 import sys
 
-from twisted.conch.ssh import transport, userauth, connection, channel, common
 from twisted.conch.manhole_ssh import ConchFactory
-from twisted.internet import defer
+from twisted.conch.ssh import transport, userauth, connection, channel, common
 from twisted.cred import credentials, checkers, portal
-from twisted.internet import protocol, reactor
+from twisted.internet import defer, protocol, reactor
 from twisted.python import log
 
 from zope import interface
+
+from ess import shelless
 
 
 class ClientTransport(transport.SSHClientTransport):
@@ -17,10 +16,8 @@ class ClientTransport(transport.SSHClientTransport):
     def verifyHostKey(self, pubKey, fingerprint):
         return defer.succeed(1)
 
-
     def connectionSecure(self):
         self.requestService(ClientUserAuth('cyli', ClientConnection()))
-
 
 
 class ClientUserAuth(userauth.SSHUserAuthClient):
@@ -36,12 +33,10 @@ class ClientUserAuth(userauth.SSHUserAuthClient):
 #        #  set pr when testing client
 
 
-
 class ClientConnection(connection.SSHConnection):
 
     def serviceStarted(self):
         self.openChannel(CatChannel(conn=self))
-
 
 
 class CatChannel(channel.SSHChannel):
@@ -52,10 +47,8 @@ class CatChannel(channel.SSHChannel):
         self.catData = data
         self.conn.sendRequest(self, 'exec', common.NS('ls'), wantReply=1)
 
-
     def dataReceived(self, data):
         self.catData += data
-
 
     def closed(self):
         print 'We got this from "ls":', self.catData
@@ -63,12 +56,10 @@ class CatChannel(channel.SSHChannel):
         reactor.stop()
 
 
-
 def testClient(host, port):
     protocol.ClientCreator(reactor, ClientTransport).connectTCP(host, port)
     log.startLogging(sys.stdout)
     reactor.run()
-
 
 
 class AlwaysAllow:
