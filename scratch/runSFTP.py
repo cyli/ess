@@ -1,11 +1,12 @@
-from csftp import server
-
 from twisted.conch.manhole_ssh import ConchFactory
-from zope import interface
-from twisted.internet import defer
 from twisted.cred import credentials, checkers, portal
-from twisted.internet import reactor
+from twisted.internet import defer, reactor
 from twisted.python.log import startLogging
+
+from zope import interface
+
+from ess import essftp
+
 
 class AlwaysAllow(object):
     credentialInterfaces = credentials.IUsernamePassword,
@@ -15,9 +16,8 @@ class AlwaysAllow(object):
         return defer.succeed(credentials.username)
 
 
-p = portal.Portal(server.ChrootedSSHRealm('TEMP/ROOT'))
+p = portal.Portal(essftp.EssFTPRealm('TEMP/ROOT'))
 p.registerChecker(AlwaysAllow())
 reactor.listenTCP(2222, ConchFactory(p))
 startLogging(open('log.txt', 'w+'))
 reactor.run()
-
