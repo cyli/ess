@@ -1,14 +1,15 @@
 import os
 
-from csftp import shelless
-from csftp.filepath import FilePath
+from twisted.conch.interfaces import ISFTPServer, ISFTPFile
+from twisted.conch.ls import lsLine
+from twisted.conch.ssh import filetransfer
+from twisted.cred import portal
+from twisted.python import components
 
 from zope.interface import implements
-from twisted.cred import portal
-from twisted.conch.interfaces import ISFTPServer, ISFTPFile
-from twisted.python import components
-from twisted.conch.ssh import filetransfer
-from twisted.conch.ls import lsLine
+
+from ess import shelless
+from ess.filepath import FilePath
 
 
 def _simplifyAttributes(filePath):
@@ -24,11 +25,10 @@ def _simplifyAttributes(filePath):
             "mtime": filePath.getModificationTime()}
 
 
-
-class ChrootedSFTPServer:
+class EssFTPServer:
     implements(ISFTPServer)
     """
-    A Chrooted SFTP server based on twisted.python.filepath.FilePath.
+    An SFTP server based on twisted.python.filepath.FilePath.
     This prevents users from connecting to a path above the set root
     path.  It ignores permissions, since everything is executed as
     whatever user the SFTP server is executed as (it does not need to
@@ -38,7 +38,6 @@ class ChrootedSFTPServer:
     def __init__(self, avatar):
         self.avatar = avatar
         self.root = FilePath(self.avatar.root)
-
 
     def _getFilePath(self, path):
         """
@@ -61,7 +60,6 @@ class ChrootedSFTPServer:
         assert fp.path.startswith(self.root.path)
         return fp
 
-
     def _getRelativePath(self, filePath):
         """
         Takes a FilePath and returns a path string relative to the root
@@ -74,21 +72,17 @@ class ChrootedSFTPServer:
             return "/"
         return "/" + "/".join(filePath.segmentsFrom(self.root))
 
-
     def _islink(self, fp):
         if fp.islink() and fp.realpath().path.startswith(self.root.path):
             return True
         return False
 
-
     def gotVersion(self, otherVersion, extData):
         return {}
 
-
     def openFile(self, filename, flags, attrs):
         fp = self._getFilePath(filename)
-        return ChrootedSFTPFile(fp, flags, attrs)
-
+        return ChrootedFile(fp, flags, attrs)
 
     def removeFile(self, filename):
         """
@@ -103,7 +97,6 @@ class ChrootedSFTPServer:
         if fp.isdir():
             raise IOError("%s is a directory" % filename)
         fp.remove()
-
 
     def renameFile(self, oldname, newname):
         """
@@ -120,7 +113,6 @@ class ChrootedSFTPServer:
             raise IOError("%s does not exist" % oldname)
         oldFP.moveTo(newFP)
 
-
     def makeDirectory(self, path, attrs=None):
         """
         Make a directory.  Ignores the attributes.
@@ -129,7 +121,6 @@ class ChrootedSFTPServer:
         if fp.exists():
             raise IOError("%s already exists." % path)
         fp.createDirectory()
-
 
     def removeDirectory(self, path):
         """
@@ -152,13 +143,11 @@ class ChrootedSFTPServer:
             raise IOError("%s is not empty.")
         fp.remove()
 
-
     def openDirectory(self, path):
         fp = self._getFilePath(path)
         if not fp.isdir():
             raise IOError("%s is not a directory." % path)
         return ChrootedDirectory(self, fp)
-
 
     def getAttrs(self, path, followLinks=True):
         """
@@ -172,10 +161,8 @@ class ChrootedSFTPServer:
         fp.restat(followLink=followLinks)
         return _simplifyAttributes(fp)
 
-
     def setAttrs(self, path, attrs):
         raise NotImplementedError
-
 
     def readLink(self, path):
         """
@@ -195,7 +182,6 @@ class ChrootedSFTPServer:
             return self._getRelativePath(rp)
         raise IOError("%s is not a link." % path)
 
-
     def makeLink(self, linkPath, targetPath):
         """
         Create a symbolic link from linkPath to targetPath.
@@ -211,7 +197,6 @@ class ChrootedSFTPServer:
             raise IOError("%s does not exist." % targetPath)
         tp.linkTo(lp)
 
-
     def realPath(self, path):
         """
         Despite what the interface says, this function will only return
@@ -226,16 +211,14 @@ class ChrootedSFTPServer:
             fp = fp.realpath()
         return self._getRelativePath(fp)
 
-
     def extendedRequest(self, extendedName, extendedData):
         raise NotImplementedError
-
 
 
 #Figure out a way to test this
 class ChrootedDirectory:
     """
-    A Chrooted SFTP directory based on twisted.python.filepath.FilePath.  It
+    A "chrooted" directory based on twisted.python.filepath.FilePath.  It
     does not expose uid and gid, and hides the fact that "fake directories"
     and "fake files" are links.
     """
@@ -248,14 +231,11 @@ class ChrootedDirectory:
         self.server = server
         self.files = filePath.children()
 
-
     def __iter__(self):
         return self
 
-
     def has_next(self):
         return len(self.files) > 0
-
 
     def next(self):
         # TODO: problem - what if the user that logs in is not a user in the
@@ -272,15 +252,13 @@ class ChrootedDirectory:
         longname = longname[:15] + longname[32:]  # remove uid and gid
         return (f.basename(), longname, _simplifyAttributes(f))
 
-
     def close(self):
         self.files = None
 
 
-
-class ChrootedSFTPFile:
+class ChrootedFile:
     """
-    A Chrooted SFTP file based on twisted.python.filepath.FilePath.
+    A "chrooted" file based on twisted.python.filepath.FilePath.
     """
     implements(ISFTPFile)
 
@@ -291,7 +269,6 @@ class ChrootedSFTPFile:
         """
         self.filePath = filePath
         self.fd = self.filePath.open(flags=self.flagTranslator(flags))
-
 
     def flagTranslator(self, flags):
         """
@@ -330,10 +307,8 @@ class ChrootedSFTPFile:
 
         return newflags
 
-
     def close(self):
         self.fd.close()
-
 
     def readChunk(self, offset, length):
         """
@@ -345,7 +320,6 @@ class ChrootedSFTPFile:
         self.fd.seek(offset)
         return self.fd.read(length)
 
-
     def writeChunk(self, offset, data):
         """
         Write data to the file at the given offset
@@ -356,10 +330,8 @@ class ChrootedSFTPFile:
         self.fd.seek(offset)
         self.fd.write(data)
 
-
     def getAttrs(self):
         return _simplifyAttributes(self.filePath)
-
 
     def setAttrs(self, attrs=None):
         """
@@ -370,24 +342,21 @@ class ChrootedSFTPFile:
         #raise NotImplementedError
 
 
-
-class ChrootedSSHRealm(object):
+class EssFTPRealm(object):
     """
-    A realm that returns a ChrootedUser as an avatar
+    A realm that returns a EssSFTPUser as an avatar
     """
     implements(portal.IRealm)
 
     def __init__(self, root):
         self.root = root
 
-
     def requestAvatar(self, avatarID, mind, *interfaces):
-        user = ChrootedUser(self.root)
+        user = EssFTPUser(self.root)
         return interfaces[0], user, user.logout
 
 
-
-class ChrootedUser(shelless.ShelllessUser):
+class EssFTPUser(shelless.ShelllessUser):
     """
     A shell-less user that does not answer any global requests.
     """
@@ -397,5 +366,5 @@ class ChrootedUser(shelless.ShelllessUser):
         self.root = root
 
 
-components.registerAdapter(ChrootedSFTPServer, ChrootedUser,
+components.registerAdapter(EssFTPServer, EssFTPUser,
                            filetransfer.ISFTPServer)
