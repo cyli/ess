@@ -102,6 +102,7 @@ Host %(hostname)s
     HostKeyAlias %(hostname)s
     HostName localhost
     CheckHostIP no
+    UserKnownHostsFile /dev/null
     StrictHostKeyChecking no
     IdentityFile %(clientPrivkeyFile)s
     Port %(port)d
@@ -110,6 +111,7 @@ Host %(hostname)s
     GSSAPIAuthentication yes
     GSSAPIDelegateCredentials no
 """
+
 
 def setupConfig(directoryPath, port):
     f = FilePath(directoryPath)

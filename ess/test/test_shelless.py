@@ -2,25 +2,24 @@
 Note - this test actually fails - runShelless in scratch works.
 """
 
-from csftp import shelless
-from csftp import _openSSHConfig
-
 import os
 
+from twisted.conch.manhole_ssh import ConchFactory
+from twisted.cred import portal, credentials, checkers
+from twisted.internet import reactor, defer, protocol
 from twisted.python.filepath import FilePath
 from twisted.trial import unittest
-from twisted.internet import reactor, defer, protocol
-from twisted.cred import portal, credentials, checkers
-from twisted.conch.manhole_ssh import ConchFactory
 
 from zope.interface import implements
+
+from ess import shelless
+from ess import _openSSHConfig
 
 
 def execCommand(process, command):
     args = command.split()
     reactor.spawnProcess(process, args[0], args, os.environ)
     return process.deferred
-
 
 
 class AlwaysAllow:
@@ -32,7 +31,6 @@ class AlwaysAllow:
         return defer.succeed(credentials.username)
 
 
-
 class SSHTester(protocol.ProcessProtocol):
 
     def __init__(self):
@@ -42,7 +40,6 @@ class SSHTester(protocol.ProcessProtocol):
         self.connected = False
         self.queue = []
 
-
     def connectionMade(self):
         self.connected = True
         for item in self.queue:
@@ -50,7 +47,6 @@ class SSHTester(protocol.ProcessProtocol):
                 self.finish()
             else:
                 self.write(item)
-
 
     def write(self, data):
         if not self.connected:
@@ -61,21 +57,17 @@ class SSHTester(protocol.ProcessProtocol):
         self.error = ""
         self.transport.write(data)
 
-
     def finish(self):
         if not self.connected:
             self.queue.append(None)
         else:
             self.transport.closeStdin()
 
-
     def outReceived(self, data):
         self.data += data
 
-
     def errReceived(self, data):
         self.error += data
-
 
     def processEnded(self, reason):
         self.error = "\n".join(
@@ -85,7 +77,6 @@ class SSHTester(protocol.ProcessProtocol):
             self.deferred.errback(Exception(self.error, self.data))
         else:
             self.deferred.callback(self.data)
-
 
 
 class TestTester(unittest.TestCase):
@@ -106,8 +97,10 @@ class TestTester(unittest.TestCase):
             def __init__(self):
                 self.readyDeferred = defer.Deferred()
                 self.deferred = defer.Deferred()
+
             def processEnded(self, reason):
                 self.deferred.callback("None")
+
             def errReceived(self, data):  # because openSSH prints on stderr
                 if "Server listening" in data:
                     self.readyDeferred.callback("Ready")
@@ -117,10 +110,8 @@ class TestTester(unittest.TestCase):
             "/usr/sbin/sshd %s" % (self.serverOptions,))
         self.ssht = SSHTester()
 
-
     def tearDown(self):
         return self.pp.deferred
-
 
     def test_regSSH(self):
         def printstuff(stuff):
@@ -133,7 +124,6 @@ class TestTester(unittest.TestCase):
         self.ssht.deferred.addCallback(self.assertEqual, "Hello\n")
         return self.ssht.deferred
 
-
     def test_regSFTP(self):
         def runSFTP(ignore):
             execCommand(self.ssht, "sftp %s" % self.clientOptions)
@@ -144,12 +134,10 @@ class TestTester(unittest.TestCase):
         return self.ssht.deferred
 
 
-
 class TestSecured:
 
     def realmFactory(self):
         raise NotImplementedError
-
 
     def setUp(self):
         """
@@ -165,37 +153,33 @@ class TestSecured:
         self.server = reactor.listenTCP(self.port, f)
         self.ssht = SSHTester()
 
-
     def tearDown(self):
         return defer.maybeDeferred(self.server.stopListening)
-
 
 
 class TestShelllessSSH(TestSecured, unittest.TestCase):
 
     def __init__(self, *args, **kwargs):
         unittest.TestCase.__init__(self, *args, **kwargs)
-
+        self.options = ("-oUserKnownHostsFile=/dev/null "
+                        "-oStrictHostKeyChecking=no "
+                        "-oLogLevel=ERROR")
 
     def realmFactory(self):
         return shelless.ShelllessSSHRealm()
 
-
     def _checkFailure(self, failure):
-        error = failure.value
         expected = 'does not provide shells or allow command execution'
-        print error
-        self.assertTrue(expected in error.value or expected in error.data)
-
+        self.assertEqual(expected, failure.getErrorMessage())
 
     def test_noshell(self):
-        d = execCommand(self.ssht, "ssh -p %d localhost" % self.port)
+        d = execCommand(self.ssht, "ssh %s -p %d localhost" %
+                (self.options, self.port))
         d.addErrback(self._checkFailure)
         return d
 
-
     def test_noexec(self):
         d = execCommand(self.ssht,
-                        'ssh -p %d localhost "ls"' % self.port)
+                        'ssh %s -p %d localhost "ls"' % (self.options, self.port))
         d.addErrback(self._checkFailure)
         return d
