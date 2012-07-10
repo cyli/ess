@@ -1,0 +1,5 @@
+*.pyc
+*_trial_temp
+*coverage_html_report
+*.coverage
+*dropin.cache
