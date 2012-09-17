@@ -1,4 +1,5 @@
 import os
+import stat
 
 from twisted.conch.interfaces import ISFTPServer, ISFTPFile
 from twisted.conch.ls import lsLine
@@ -12,15 +13,31 @@ from ess import shelless
 from ess.filepath import FilePath
 
 
-def _simplifyAttributes(filePath):
-    # TODO - rather than just return the st_mode of the real path, should
-    # mask out the link bit of the link with the actual bit (file, directory)
-    realpath = filePath.realpath()
-    realpath.restat()
+def _inRoot(filePath, root):
+    """
+    Is the real path of this filePath (it's acutal path if it's a not a link,
+    or the target path if it is a link) in the root?
+    """
+    return filePath.realpath().path.startswith(root.path)
+
+
+def _simplifyAttributes(filePath, root=None):
+    """
+    @param inRoot: whether the filePath is in the root
+    """
+    st_mode = filePath.statinfo.st_mode
+    if root is not None and not _inRoot(filePath, root):
+        # the mode should be the filepath's mode except that the file type bits
+        # should reflect the real path's file type bits
+        realpath = filePath.realpath()
+        realpath.restat()
+        st_mode = (stat.S_IMODE(st_mode) |
+                  stat.S_IFMT(realpath.statinfo.st_mode))
+
     return {"size": filePath.getsize(),
             "uid": filePath.getUserID(),
             "gid": filePath.getGroupID(),
-            "permissions": realpath.statinfo.st_mode,
+            "permissions": st_mode,
             "atime": filePath.getAccessTime(),
             "mtime": filePath.getModificationTime()}
 
@@ -73,7 +90,7 @@ class EssFTPServer:
         return "/" + "/".join(filePath.segmentsFrom(self.root))
 
     def _islink(self, fp):
-        if fp.islink() and fp.realpath().path.startswith(self.root.path):
+        if fp.islink() and _inRoot(fp, self.root):
             return True
         return False
 
@@ -82,7 +99,7 @@ class EssFTPServer:
 
     def openFile(self, filename, flags, attrs):
         fp = self._getFilePath(filename)
-        return ChrootedFile(fp, flags, attrs)
+        return ChrootedFile(self, fp, flags, attrs)
 
     def removeFile(self, filename):
         """
@@ -159,7 +176,7 @@ class EssFTPServer:
         """
         fp = self._getFilePath(path)
         fp.restat(followLink=followLinks)
-        return _simplifyAttributes(fp)
+        return _simplifyAttributes(fp, self.root)
 
     def setAttrs(self, path, attrs):
         raise NotImplementedError
@@ -216,7 +233,7 @@ class EssFTPServer:
 
 
 #Figure out a way to test this
-class ChrootedDirectory:
+class ChrootedDirectory(object):
     """
     A "chrooted" directory based on twisted.python.filepath.FilePath.  It
     does not expose uid and gid, and hides the fact that "fake directories"
@@ -250,7 +267,8 @@ class ChrootedDirectory:
         f.restat(followLink=followLink)
         longname = lsLine(f.basename(), f.statinfo)
         longname = longname[:15] + longname[32:]  # remove uid and gid
-        return (f.basename(), longname, _simplifyAttributes(f))
+        return (f.basename(), longname,
+                _simplifyAttributes(f, self.server.root))
 
     def close(self):
         self.files = None
@@ -262,11 +280,12 @@ class ChrootedFile:
     """
     implements(ISFTPFile)
 
-    def __init__(self, filePath, flags, attrs=None):
+    def __init__(self, server, filePath, flags, attrs=None):
         """
         @param filePath: a FilePath to open
         @param flags: flags to open the file with
         """
+        self.server = server
         self.filePath = filePath
         self.fd = self.filePath.open(flags=self.flagTranslator(flags))
 
@@ -331,7 +350,7 @@ class ChrootedFile:
         self.fd.write(data)
 
     def getAttrs(self):
-        return _simplifyAttributes(self.filePath)
+        return _simplifyAttributes(self.filePath, self.server.root)
 
     def setAttrs(self, attrs=None):
         """

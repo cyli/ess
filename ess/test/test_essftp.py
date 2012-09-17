@@ -1,4 +1,5 @@
 import os
+import stat
 
 from twisted.conch.ssh import filetransfer
 from twisted.trial import unittest
@@ -7,9 +8,13 @@ from ess import essftp, filepath
 from ess.test.test_shelless import execCommand, TestSecured
 
 
-class TestAvatar:
+class TestAvatar(object):
     def __init__(self, root):
         self.root = root
+
+
+class MockObject(object):
+    pass
 
 
 class TestChrooted:
@@ -22,26 +27,38 @@ class TestChrooted:
                                   : /root/fileRootLink -> /root/fileRoot
                                   : /root/fileAltLink -> /alt/fileAlt
                                   : /root/subdir <directory>
+                                  : /root/altlink -> /alt
                           : /alt  : /alt/fileAlt <file>
         """
 
         def makeFile(fp):
             fp.create()
             fp.setContent(fp.path)
+            return fp
 
         self.tempdir = filepath.FilePath(self.mktemp())
         self.rootdir = self.tempdir.child("root")
-        self.rootdir.child("subdir").makedirs()
-        altdir = self.tempdir.child("alt")
-        altdir.makedirs()
 
-        altdir.linkTo(self.rootdir.child("altlink"))
+        self.paths = {
+            'root': self.rootdir,
+            'subdir': self.rootdir.child('subdir'),
+            'altdir': self.tempdir.child("alt")
+        }
 
-        makeFile(self.rootdir.child("fileRoot"))
-        self.rootdir.child("fileRoot").linkTo(
-            self.rootdir.child("fileRootLink"))
-        makeFile(altdir.child("fileAlt"))
-        altdir.child("fileAlt").linkTo(self.rootdir.child("fileAltLink"))
+        self.paths['subdir'].makedirs()
+        self.paths['altdir'].makedirs()
+
+        self.paths.update({
+            'altlink': self.rootdir.child("altlink"),
+            'fileRoot': makeFile(self.rootdir.child("fileRoot")),
+            'fileRootLink': self.rootdir.child("fileRootLink"),
+            'fileAlt': makeFile(self.paths['altdir'].child("fileAlt")),
+            'fileAltLink': self.rootdir.child("fileAltLink")
+        })
+
+        self.paths['altdir'].linkTo(self.paths['altlink'])
+        self.paths['fileRoot'].linkTo(self.paths['fileRootLink'])
+        self.paths['fileAlt'].linkTo(self.paths['fileAltLink'])
 
         self.server = essftp.EssFTPServer(TestAvatar(self.rootdir.path))
 
@@ -78,7 +95,7 @@ class TestEssFTPServer(TestChrooted, unittest.TestCase):
         """
 
         self.failUnless(self.server._islink(
-                self.server._getFilePath("fileRootLink")))
+                        self.server._getFilePath("fileRootLink")))
         self.failIf(self.server._islink(self.server._getFilePath("altlink")))
 
     def testRealPath(self):
@@ -88,22 +105,21 @@ class TestEssFTPServer(TestChrooted, unittest.TestCase):
         """
         linkTargets = [
             (self.rootdir.child("altlink"),
-                self.rootdir.child("altlink"),
-                "realpath should not reveal ancestors/siblings of root"),
+             self.rootdir.child("altlink"),
+             "realpath should not reveal ancestors/siblings of root"),
             (self.rootdir.child("fileRoot"),
-                self.rootdir.child("fileRoot"),
-                "realpath of an actual file should return self"),
+             self.rootdir.child("fileRoot"),
+             "realpath of an actual file should return self"),
             (self.rootdir.child("fileRootLink"),
-                self.rootdir.child("fileRoot"),
-                "if target is within root, returns the true path"),
+             self.rootdir.child("fileRoot"),
+             "if target is within root, returns the true path"),
             (self.rootdir.child("fileAltLink"),
-                self.rootdir.child("fileAltLink"),
-                "cannot reveal ancestor/siblings of root")
-            ]
-        for link, target, msg in linkTargets:
+             self.rootdir.child("fileAltLink"),
+             "cannot reveal ancestor/siblings of root")
+        ]
+        for lnk, target, msg in linkTargets:
             self.assertEquals(
-                self.server.realPath(
-                    "/".join(link.segmentsFrom(self.rootdir))),
+                self.server.realPath("/".join(lnk.segmentsFrom(self.rootdir))),
                 "/" + "/".join(target.segmentsFrom(self.rootdir)),
                 msg)
 
@@ -254,14 +270,23 @@ class TestChrootedDirectory(TestChrooted, unittest.TestCase):
         for path, longname, attrs in dirlist:
             self.failUnless(self.rootdir.child(path).exists())
 
-    def testOpacity(self):
+    def testFakeFilesReadAsFiles(self):
         """
         Make sure that fake directories and files do not seem as such
         """
         dirlist = essftp.ChrootedDirectory(self.server, self.rootdir)
         for path, longname, attrs in dirlist:
             if path in ("altlink", "fileAltLink"):
-                self.assertNotEquals(attrs, self.server.getAttrs(path, False))
+                # the returned permissions of the fake file should not be
+                # the same as the permissions of the link
+                realpath = self.paths[path]
+                realpath.restat(followLink=False)
+
+                self.assertNotEquals(attrs['permissions'],
+                                     realpath.statinfo.st_mode)
+                self.assertTrue(not stat.S_ISLNK(attrs['permissions']),
+                    "The fake file {0} should not appear to be a link".format(
+                        path))
 
 
 class TestChrootedFile(TestChrooted, unittest.TestCase):
@@ -277,8 +302,10 @@ class TestChrootedFile(TestChrooted, unittest.TestCase):
 
     def setUp(self):
         TestChrooted.setUp(self)
+        self.mockServer = MockObject()
+        self.mockServer.root = self.rootdir
         self.sftpf = essftp.ChrootedFile(
-            self.rootdir.child("fileRoot"), self.read)
+            self.mockServer, self.rootdir.child("fileRoot"), self.read)
         self.flagTester = self.sftpf.flagTranslator
 
     def bitIn(self, lookingFor, flags):
@@ -349,12 +376,24 @@ class TestChrootedFile(TestChrooted, unittest.TestCase):
         Make sure that it's writable
         """
         fp = self.rootdir.child("fileRoot")
-        sftpf = essftp.ChrootedFile(fp, self.read | self.write)
+        sftpf = essftp.ChrootedFile(self.mockServer, fp,
+                                    self.read | self.write)
         sftpf.writeChunk(5, "NEWDATA")
         sftpf.close()
         f = fp.open()
         self.assertEquals(f.read(), fp.path[:5] + "NEWDATA" + fp.path[12:])
         f.close()
+
+    def testFakeFileReadsAsFile(self):
+        """
+        Make sure that fake directories and files do not seem as such
+        """
+        fp = self.rootdir.child("fileAltLink")
+        fp.restat(followLink=False)
+        attrs = essftp.ChrootedFile(self.mockServer, fp, self.read).getAttrs()
+        self.assertNotEquals(attrs['permissions'], fp.statinfo.st_mode)
+        self.assertTrue(not stat.S_ISLNK(attrs['permissions']),
+            "The fake file fileAltLink should not appear to be a link")
 
 
 class TestEssFTP(TestSecured, unittest.TestCase):
