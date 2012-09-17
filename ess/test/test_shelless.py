@@ -13,7 +13,7 @@ from twisted.trial import unittest
 from zope.interface import implements
 
 from ess import shelless
-from ess import _openSSHConfig
+from ess.test import _openSSHConfig
 
 
 def execCommand(process, command):

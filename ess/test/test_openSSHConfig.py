@@ -1,4 +1,4 @@
-from ess import _openSSHConfig as openSSHConfig
+from ess.test import _openSSHConfig as openSSHConfig
 
 from twisted.trial import unittest
 from twisted.python.filepath import FilePath
