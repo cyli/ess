@@ -49,9 +49,30 @@ def readAuthorizedKeyFile(fileobj):
 
 
 @implementer(ISSHPublicKeyDB)
-class AuthorizedKeysFilesDB(object):
+class AuthorizedKeysFilesMapping(object):
     """
+    Object that provides SSH public keys based on a dictionary of usernames
+    mapped to authorized key files
+
+    @ivar mapping: C{dict} of usernames mapped to iterables of authorized key
+        files
     """
+    def __init__(self, mapping):
+        self.mapping = mapping
+
+    def getAuthorizedKeys(self, username):
+        """
+        @see: L{ess.checkers.ISSHPublicKeyDB}
+        """
+        for fp in (FilePath(f) for f in self.mapping.get(username, [])):
+            if fp.exists():
+                try:
+                    f = fp.open()
+                except:
+                    log.msg("Unable to read {0}".format(fp.path))
+
+                for key in readAuthorizedKeyFile(f):
+                    yield key
 
 
 @implementer(ISSHPublicKeyDB)
@@ -105,67 +126,81 @@ class SSHPublicKeyChecker(object):
         self.keydb = keydb
 
     def requestAvatarId(self, credentials):
-        d = defer.maybeDeferred(self._checkKey, credentials)
-        d.addErrback(self._log_errors)
-        d.addCallback(self._cbRequestAvatarId, credentials)
+        d = defer.maybeDeferred(self._sanityCheckKey, credentials)
+        d.addCallback(self._checkKey, credentials)
+        d.addCallback(self._verifyKey, credentials)
         return d
 
-    def _cbRequestAvatarId(self, (validKey, pubKey), credentials):
+    def _sanityCheckKey(self, credentials):
         """
-        Check whether the credentials themselves are valid, now that we know
-        if the key matches the user.
-
-        @param validKey: A boolean indicating whether or not the public key
-            matches a key in the user's authorized_keys file.
+        Check whether the provided credentials are a valid SSH key with a
+        signature (does not actually verify the signature)
 
         @param credentials: The credentials offered by the user.
         @type credentials: L{ISSHPrivateKey} provider
 
-        @raise UnauthorizedLogin: (as a failure) if the key does not match the
-            user in C{credentials}. Also raised if the user provides an invalid
-            signature.
-
-        @raise ValidPublicKey: (as a failure) if the key matches the user but
-            the credentials do not include a signature. See
+        @raise ValidPublicKey: the credentials do not include a signature. See
             L{error.ValidPublicKey} for more information.
+
+        @raise BadKeyError: the key included with the credentials is not
+            recognized as a key
+
+        @return: L{twisted.conch.ssh.keys.Key} of the key in the credentials
+        """
+        if not credentials.signature:
+            raise error.ValidPublicKey()
+
+        return Key.fromString(credentials.blob)
+
+    def _checkKey(self, pubKey, credentials):
+        """
+        Check the public key against all authorized keys (if any) for the
+        user.
+
+        @param pubKey: L{twisted.conch.ssh.keys.Key} of the key in the
+            credentials (just to prevent it from having to be calculated
+            again)
+
+        @param credentials: The credentials offered by the user.
+        @type credentials: L{ISSHPrivateKey} provider
+
+        @raise UnauthorizedLogin: if the key is not authorized, or if there
+            was any error obtaining a list of authorized keys for the user
+
+        @return: The C{pubKey}, if the key is authorized
+        """
+        try:
+            if any(key == pubKey for key in
+                   self.keydb.getAuthorizedKeys(credentials.username)):
+                return pubKey
+        except:
+            log.err()
+            raise UnauthorizedLogin("Unable to get avatar id")
+
+        raise UnauthorizedLogin("Key not authorized")
+
+    def _verifyKey(self, pubKey, credentials):
+        """
+        Check whether the credentials themselves are valid, now that we know
+        if the key matches the user.
+
+        @param pubKey: L{twisted.conch.ssh.keys.Key} of the key in the
+            credentials (just to prevent it from having to be calculated
+            again)
+
+        @param credentials: The credentials offered by the user.
+        @type credentials: L{ISSHPrivateKey} provider
+
+        @raise UnauthorizedLogin: if the key signature is invalid or there
+            was any error verifying the signature
 
         @return: The user's username, if authentication was successful.
         """
-        if not validKey:
-            raise UnauthorizedLogin("Key not authorized")
-        if not credentials.signature:
-            raise error.ValidPublicKey()
-        else:
-            try:
-                if pubKey.verify(credentials.signature, credentials.sigData):
-                    return credentials.username
-            except: # any error should be treated as a failed login
-                log.err()
-                raise UnauthorizedLogin('Error while verifying key')
+        try:
+            if pubKey.verify(credentials.signature, credentials.sigData):
+                return credentials.username
+        except:  # any error should be treated as a failed login
+            log.err()
+            raise UnauthorizedLogin('Error while verifying key')
 
         raise UnauthorizedLogin("Key signature invalid.")
-
-
-    def _checkKey(self, credentials):
-        """
-        Checks the user credentials against all authorized keys (if any) for
-        the user.
-        """
-        try:
-            pubKey = Key.fromString(credentials.blob)
-        except:
-            raise UnauthorizedLogin('Credentials contained invalid key')
-
-        try:
-            return (any(key == pubKey for key in
-                        self.keydb.getAuthorizedKeys(credentials.username)),
-                    pubKey)
-        except:
-            raise UnauthorizedLogin("Unable to get avatar id")
-
-    def _log_errors(self, f):
-        """
-        Logs errors
-        """
-        log.msg(f)
-        return f
