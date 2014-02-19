@@ -2,8 +2,6 @@
 Module that provides a SSH public key checker, but without depending
 necessarily on pwd
 """
-import base64, binascii
-
 try:
     import pwd as _pwd
 except ImportError:
@@ -12,7 +10,7 @@ except ImportError:
 from zope.interface import implementer, Interface
 
 from twisted.conch import error
-from twisted.conch.ssh import keys
+from twisted.conch.ssh.keys import Key
 from twisted.cred.checkers import ICredentialsChecker
 from twisted.cred.credentials import ISSHPrivateKey
 from twisted.cred.error import UnauthorizedLogin
@@ -30,8 +28,7 @@ class ISSHPublicKeyDB(Interface):
         """
         @param username: C{str} username of the user
 
-        @return: an iterable which returns a series of binary strings
-            representing authorized keys
+        @return: an iterable of L{twisted.conch.ssh.keys.Key}
         """
 
 def readAuthorizedKeyFile(fileobj):
@@ -40,15 +37,14 @@ def readAuthorizedKeyFile(fileobj):
 
     @param fileobj: an open file object which can be read from
 
-    @return: an iterable of strings representing base64-decoded authorized
-        keys contained in the authorized keys file
+    @return: an iterable of L{twisted.conch.ssh.keys.Key}
     """
     for line in fileobj:
-        tokenized = line.strip().split()
-        if len(tokenized) >= 2:
+        line = line.strip()
+        if not line.startswith('#'):  # for comments
             try:
-                yield base64.decodestring(tokenized[1])
-            except binascii.Error:
+                yield Key.fromString(line)
+            except:
                 pass
 
 
@@ -110,11 +106,11 @@ class SSHPublicKeyChecker(object):
 
     def requestAvatarId(self, credentials):
         d = defer.maybeDeferred(self._checkKey, credentials)
-        d.addErrback(self._translateErrors)
+        d.addErrback(self._log_errors)
         d.addCallback(self._cbRequestAvatarId, credentials)
         return d
 
-    def _cbRequestAvatarId(self, validKey, credentials):
+    def _cbRequestAvatarId(self, (validKey, pubKey), credentials):
         """
         Check whether the credentials themselves are valid, now that we know
         if the key matches the user.
@@ -136,18 +132,18 @@ class SSHPublicKeyChecker(object):
         @return: The user's username, if authentication was successful.
         """
         if not validKey:
-            raise UnauthorizedLogin("invalid key")
+            raise UnauthorizedLogin("Key not authorized")
         if not credentials.signature:
             raise error.ValidPublicKey()
         else:
             try:
-                pubKey = keys.Key.fromString(credentials.blob)
                 if pubKey.verify(credentials.signature, credentials.sigData):
                     return credentials.username
             except: # any error should be treated as a failed login
                 log.err()
-                raise UnauthorizedLogin('error while verifying key')
-        raise UnauthorizedLogin("unable to verify key")
+                raise UnauthorizedLogin('Error while verifying key')
+
+        raise UnauthorizedLogin("Key signature invalid.")
 
 
     def _checkKey(self, credentials):
@@ -155,12 +151,21 @@ class SSHPublicKeyChecker(object):
         Checks the user credentials against all authorized keys (if any) for
         the user.
         """
-        return any(key == credentials.blob for key in
-                   self.keydb.getAuthorizedKeys(credentials.username))
+        try:
+            pubKey = Key.fromString(credentials.blob)
+        except:
+            raise UnauthorizedLogin('Credentials contained invalid key')
 
-    def _translateErrors(self, f):
+        try:
+            return (any(key == pubKey for key in
+                        self.keydb.getAuthorizedKeys(credentials.username)),
+                    pubKey)
+        except:
+            raise UnauthorizedLogin("Unable to get avatar id")
+
+    def _log_errors(self, f):
         """
-        Translates all errors into L{UnauthorizedLogin} errors.
+        Logs errors
         """
         log.msg(f)
-        raise UnauthorizedLogin("unable to get avatar id")
+        return f
