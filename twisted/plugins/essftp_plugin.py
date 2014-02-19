@@ -1,6 +1,5 @@
 from twisted.application.service import IServiceMaker
 from twisted.application import internet
-from twisted.conch.checkers import SSHPublicKeyDatabase
 from twisted.conch.openssh_compat.factory import OpenSSHFactory
 from twisted.conch.manhole_ssh import ConchFactory
 from twisted.cred import credentials, checkers, portal, strcred
@@ -11,7 +10,7 @@ from twisted.plugin import IPlugin
 from zope.interface import implements
 
 from ess import essftp
-
+from ess.checkers import UNIXAuthorizedKeysFiles, SSHPublicKeyChecker
 
 class AlwaysAllow(object):
     credentialInterfaces = credentials.IUsernamePassword,
@@ -53,7 +52,8 @@ class EssFTPServiceMaker(object):
         """
         _portal = portal.Portal(
             essftp.EssFTPRealm(essftp.FilePath(options['root']).path),
-            options.get('credCheckers', [SSHPublicKeyDatabase()]))
+            options.get('credCheckers',
+                        [SSHPublicKeyChecker(UNIXAuthorizedKeysFiles())]))
 
         if options['keyDirectory']:
             factory = OpenSSHFactory()
