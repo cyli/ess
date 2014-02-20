@@ -9,7 +9,7 @@ except ImportError:
 
 from zope.interface import implementer, Interface
 
-from twisted.conch import error
+from twisted.conch.error import ValidPublicKey
 from twisted.conch.ssh.keys import Key
 from twisted.cred.checkers import ICredentialsChecker
 from twisted.cred.credentials import ISSHPrivateKey
@@ -20,7 +20,7 @@ from twisted.python.util import runAsEffectiveUser
 from twisted.python.filepath import FilePath
 
 
-class ISSHPublicKeyDB(Interface):
+class IAuthorizedKeysDB(Interface):
     """
     An object that provides valid authorized ssh keys mapped to usernames
     """
@@ -31,24 +31,28 @@ class ISSHPublicKeyDB(Interface):
         @return: an iterable of L{twisted.conch.ssh.keys.Key}
         """
 
-def readAuthorizedKeyFile(fileobj):
+
+def readAuthorizedKeyFile(fileobj, parsekey=Key.fromString):
     """
     Reads keys from an authorized keys file
 
     @param fileobj: an open file object which can be read from
+    @param parsekey: a callable that takes a string and returns a
+        L{twisted.conch.ssh.keys.Key}, mainly to be used for testing.  The
+        default is L{twisted.conch.keys.Key.fromString}
 
     @return: an iterable of L{twisted.conch.ssh.keys.Key}
     """
     for line in fileobj:
         line = line.strip()
-        if not line.startswith('#'):  # for comments
+        if line and not line.startswith('#'):  # for comments
             try:
-                yield Key.fromString(line)
+                yield parsekey(line)
             except:
                 pass
 
 
-@implementer(ISSHPublicKeyDB)
+@implementer(IAuthorizedKeysDB)
 class AuthorizedKeysFilesMapping(object):
     """
     Object that provides SSH public keys based on a dictionary of usernames
@@ -56,9 +60,13 @@ class AuthorizedKeysFilesMapping(object):
 
     @ivar mapping: C{dict} of usernames mapped to iterables of authorized key
         files
+    @ivar parsekey: a callable that takes a string and returns a
+        L{twisted.conch.ssh.keys.Key}, mainly to be used for testing.  The
+        default is L{twisted.conch.keys.Key.fromString}
     """
-    def __init__(self, mapping):
+    def __init__(self, mapping, parsekey=Key.fromString):
         self.mapping = mapping
+        self.parsekey = parsekey
 
     def getAuthorizedKeys(self, username):
         """
@@ -70,12 +78,12 @@ class AuthorizedKeysFilesMapping(object):
                     f = fp.open()
                 except:
                     log.msg("Unable to read {0}".format(fp.path))
+                else:
+                    for key in readAuthorizedKeyFile(f, self.parsekey):
+                        yield key
 
-                for key in readAuthorizedKeyFile(f):
-                    yield key
 
-
-@implementer(ISSHPublicKeyDB)
+@implementer(IAuthorizedKeysDB)
 class UNIXAuthorizedKeysFiles(object):
     """
     Object that provides SSH public keys based on public keys listed in
@@ -83,9 +91,19 @@ class UNIXAuthorizedKeysFiles(object):
 
     @ivar pwd: access to the Unix user account and password database (default
         is the Python module L{pwd})
+    @ivar runas: a callable that takes a uid, a gid, and a param callable plus
+        its args and kwargs, which calls the param callable as the user with
+        the given uid and gid - this is mainly to be used for testing.  The
+        default is L{twisted.python.util.runAsEffectiveUser}
+    @ivar parsekey: a callable that takes a string and returns a
+        L{twisted.conch.ssh.keys.Key}, mainly to be used for testing.  The
+        default is L{twisted.conch.keys.Key.fromString}
     """
-    def __init__(self, pwd=None):
+    def __init__(self, pwd=None, runas=runAsEffectiveUser,
+                 parsekey=Key.fromString):
         self.pwd = pwd
+        self.runas = runas
+        self.parsekey = parsekey
         if pwd is None:
             self.pwd = _pwd
 
@@ -93,20 +111,25 @@ class UNIXAuthorizedKeysFiles(object):
         """
         @see: L{ess.checkers.ISSHPublicKeyDB}
         """
-        passwd = self.pwd.getpwnam(username)
+        try:
+            passwd = self.pwd.getpwnam(username)
+        except:
+            return
 
         root = FilePath(passwd.pw_dir).child('.ssh')
         files = ['authorized_keys', 'authorized_keys2']
         for fp in (root.child(f) for f in files):
             if fp.exists():
+                f = None
                 try:
                     f = fp.open()
                 except IOError:
-                    f = runAsEffectiveUser(passwd.pw_uid, passwd.pw_gid,
-                                           fp.open)
+                    if self.runas:
+                        f = self.runas(passwd.pw_uid, passwd.pw_gid, fp.open)
 
-                for key in readAuthorizedKeyFile(f):
-                    yield key
+                if f is not None:
+                    for key in readAuthorizedKeyFile(f, self.parsekey):
+                        yield key
 
 
 @implementer(ICredentialsChecker)
@@ -118,7 +141,7 @@ class SSHPublicKeyChecker(object):
     Providing this checker with a L{UNIXAuthorizedKeysFiles} should be
     equivalent to L{twisted.conch.checkers.SSHPublicKeyDatabase}.
 
-    @param keydb: a provider of L{ISSHPublicKeyDB}
+    @ivar keydb: a provider of L{ISSHPublicKeyDB}
     """
     credentialInterfaces = (ISSHPrivateKey,)
 
@@ -126,6 +149,9 @@ class SSHPublicKeyChecker(object):
         self.keydb = keydb
 
     def requestAvatarId(self, credentials):
+        """
+        @see L{twisted.cred.checkers.ICredentialsChecker.requestAvatarId}
+        """
         d = defer.maybeDeferred(self._sanityCheckKey, credentials)
         d.addCallback(self._checkKey, credentials)
         d.addCallback(self._verifyKey, credentials)
@@ -136,8 +162,8 @@ class SSHPublicKeyChecker(object):
         Check whether the provided credentials are a valid SSH key with a
         signature (does not actually verify the signature)
 
-        @param credentials: The credentials offered by the user.
-        @type credentials: L{ISSHPrivateKey} provider
+        @param credentials: The L{ISSHPrivateKey} provider credentials
+            offered by the user.
 
         @raise ValidPublicKey: the credentials do not include a signature. See
             L{error.ValidPublicKey} for more information.
@@ -148,7 +174,7 @@ class SSHPublicKeyChecker(object):
         @return: L{twisted.conch.ssh.keys.Key} of the key in the credentials
         """
         if not credentials.signature:
-            raise error.ValidPublicKey()
+            raise ValidPublicKey()
 
         return Key.fromString(credentials.blob)
 
@@ -161,8 +187,8 @@ class SSHPublicKeyChecker(object):
             credentials (just to prevent it from having to be calculated
             again)
 
-        @param credentials: The credentials offered by the user.
-        @type credentials: L{ISSHPrivateKey} provider
+        @param credentials: The L{ISSHPrivateKey} provider credentials
+            offered by the user.
 
         @raise UnauthorizedLogin: if the key is not authorized, or if there
             was any error obtaining a list of authorized keys for the user
@@ -188,8 +214,8 @@ class SSHPublicKeyChecker(object):
             credentials (just to prevent it from having to be calculated
             again)
 
-        @param credentials: The credentials offered by the user.
-        @type credentials: L{ISSHPrivateKey} provider
+        @param credentials: The L{ISSHPrivateKey} provider credentials
+            offered by the user.
 
         @raise UnauthorizedLogin: if the key signature is invalid or there
             was any error verifying the signature
