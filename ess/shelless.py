@@ -30,9 +30,6 @@ class ShelllessSession(session.SSHSession):
 
     name = 'shellessSession'
 
-    def __init__(self, *args, **kw):
-        session.SSHSession.__init__(self, *args, **kw)
-
     def _noshell(self):
         if not self.closing:
             self.write("This server does not provide shells "
